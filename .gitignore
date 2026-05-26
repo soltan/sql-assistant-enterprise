@@ -1,0 +1,33 @@
+# Compiled class files
+*.class
+server-build/
+
+# H2 database files
+data/
+*.mv.db
+*.trace.db
+*.lock.db
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.settings/
+.classpath
+.project
+.factorypath
+
+# Build
+target/
+build/
+out/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Dependencies (downloaded at build time)
+lib/*.jar

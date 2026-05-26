@@ -1,0 +1,1762 @@
+<!DOCTYPE html>
+<html lang="fr" data-theme="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Enterprise SQL Assistant V3 — Multi-Database</title>
+<style>
+/* ═══════════════════════════════════════════════════════════════
+   CSS RESET & VARIABLES
+   ═══════════════════════════════════════════════════════════════ */
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg-primary:#0a0e17;--bg-secondary:#111827;--bg-tertiary:#1e293b;
+  --bg-card:#151d2e;--bg-input:#0d1321;--bg-hover:#1a2744;
+  --border:#1e3a5f;--border-focus:#3b82f6;
+  --text-primary:#e2e8f0;--text-secondary:#94a3b8;--text-muted:#64748b;
+  --accent:#3b82f6;--accent-hover:#2563eb;--accent-glow:rgba(59,130,246,.25);
+  --success:#10b981;--warning:#f59e0b;--danger:#ef4444;--info:#06b6d4;
+  --purple:#8b5cf6;--pink:#ec4899;
+  --radius:8px;--radius-lg:12px;--radius-xl:16px;
+  --shadow:0 4px 24px rgba(0,0,0,.4);
+  --font-mono:'JetBrains Mono','Fira Code','Cascadia Code','Consolas',monospace;
+  --font-sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  --transition:all .2s ease;
+}
+[data-theme="light"]{
+  --bg-primary:#f8fafc;--bg-secondary:#ffffff;--bg-tertiary:#f1f5f9;
+  --bg-card:#ffffff;--bg-input:#f8fafc;--bg-hover:#e2e8f0;
+  --border:#cbd5e1;--border-focus:#3b82f6;
+  --text-primary:#0f172a;--text-secondary:#475569;--text-muted:#94a3b8;
+  --shadow:0 4px 24px rgba(0,0,0,.08);
+}
+html{font-size:14px;scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-primary);height:100vh;overflow:hidden;display:flex;flex-direction:column}
+::-webkit-scrollbar{width:6px;height:6px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+::-webkit-scrollbar-thumb:hover{background:var(--text-muted)}
+a{color:var(--accent);text-decoration:none}
+button{cursor:pointer;font-family:inherit;font-size:inherit;border:none;outline:none;background:none;color:inherit}
+input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;background:none;border:none;outline:none}
+
+/* ═══════════════════════════════════════════════════════════════
+   LAYOUT
+   ═══════════════════════════════════════════════════════════════ */
+.app{display:flex;flex-direction:column;height:100vh}
+.header{display:flex;align-items:center;justify-content:space-between;padding:0 20px;height:52px;background:var(--bg-secondary);border-bottom:1px solid var(--border);flex-shrink:0;z-index:100}
+.header-left{display:flex;align-items:center;gap:12px}
+.logo{display:flex;align-items:center;gap:8px}
+.logo-icon{width:28px;height:28px;border-radius:6px;background:linear-gradient(135deg,var(--accent),var(--purple));display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;color:#fff}
+.logo-text{font-weight:700;font-size:15px;letter-spacing:-.3px}
+.logo-version{font-size:10px;padding:2px 6px;border-radius:4px;background:var(--accent-glow);color:var(--accent);font-weight:600}
+
+/* Database Selector */
+.db-selector-wrap{display:flex;align-items:center;gap:10px;margin-left:16px;padding-left:16px;border-left:1px solid var(--border)}
+.db-selector{position:relative}
+.db-selector select{appearance:none;padding:6px 32px 6px 12px;border-radius:var(--radius);background:var(--bg-tertiary);border:1px solid var(--border);color:var(--text-primary);font-size:12px;font-weight:600;cursor:pointer;transition:var(--transition);min-width:160px}
+.db-selector select:hover{border-color:var(--accent)}
+.db-selector select:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.db-selector::after{content:'▼';position:absolute;right:10px;top:50%;transform:translateY(-50%);font-size:9px;color:var(--text-muted);pointer-events:none}
+.db-info{display:flex;flex-direction:column;gap:1px}
+.db-desc{font-size:10px;color:var(--text-muted);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.db-meta{font-size:10px;color:var(--text-secondary);font-family:var(--font-mono)}
+.db-meta .db-table-count{color:var(--purple);font-weight:600}
+.db-conn-dot{width:6px;height:6px;border-radius:50%;display:inline-block;margin-right:3px}
+.db-conn-dot.on{background:var(--success)}
+.db-conn-dot.off{background:var(--danger)}
+
+.header-right{display:flex;align-items:center;gap:8px}
+.header-btn{width:34px;height:34px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--text-secondary);transition:var(--transition)}
+.header-btn:hover{background:var(--bg-hover);color:var(--text-primary)}
+.header-btn.active{color:var(--accent);background:var(--accent-glow)}
+
+.main{display:flex;flex:1;overflow:hidden}
+.sidebar{width:280px;background:var(--bg-secondary);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;transition:width .3s ease}
+.sidebar.collapsed{width:0;border:none;overflow:hidden}
+.sidebar-header{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between}
+.sidebar-header h3{font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text-muted);font-weight:600}
+.sidebar-content{flex:1;overflow-y:auto;padding:8px}
+.content{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative}
+.panel-right{width:340px;background:var(--bg-secondary);border-left:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow:hidden;transition:width .3s ease}
+.panel-right.collapsed{width:0;border:none;overflow:hidden}
+
+/* ═══════════════════════════════════════════════════════════════
+   CHAT AREA
+   ═══════════════════════════════════════════════════════════════ */
+.chat-header{padding:12px 20px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0}
+.chat-header-info{display:flex;align-items:center;gap:8px}
+.chat-header-info .dot{width:8px;height:8px;border-radius:50%;background:var(--success);animation:pulse 2s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.chat-header-title{font-weight:600;font-size:13px}
+.chat-header-subtitle{font-size:11px;color:var(--text-muted)}
+.chat-actions{display:flex;gap:4px}
+
+.chat-messages{flex:1;overflow-y:auto;padding:16px 20px;display:flex;flex-direction:column;gap:16px}
+.msg{display:flex;gap:10px;max-width:95%;animation:msgIn .3s ease}
+@keyframes msgIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.msg.user{align-self:flex-end;flex-direction:row-reverse}
+.msg-avatar{width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;font-weight:600}
+.msg.user .msg-avatar{background:linear-gradient(135deg,var(--accent),#6366f1);color:#fff}
+.msg.assistant .msg-avatar{background:linear-gradient(135deg,var(--success),#059669);color:#fff}
+.msg-body{display:flex;flex-direction:column;gap:6px;min-width:0}
+.msg-text{padding:10px 14px;border-radius:12px;font-size:13px;line-height:1.6;word-break:break-word}
+.msg.user .msg-text{background:var(--accent);color:#fff;border-bottom-right-radius:4px}
+.msg.assistant .msg-text{background:var(--bg-tertiary);border-bottom-left-radius:4px}
+.msg-time{font-size:10px;color:var(--text-muted);padding:0 4px}
+.msg.user .msg-time{text-align:right}
+
+/* ═══════════════════════════════════════════════════════════════
+   SQL OUTPUT
+   ═══════════════════════════════════════════════════════════════ */
+.sql-output{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-top:4px}
+.sql-output-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-tertiary);border-bottom:1px solid var(--border)}
+.sql-output-lang{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--accent);font-weight:700}
+.sql-output-actions{display:flex;gap:4px;align-items:center}
+.sql-output-actions button{height:26px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);transition:var(--transition);font-size:11px;padding:0 6px;gap:3px}
+.sql-output-actions button:hover{background:var(--bg-hover);color:var(--text-primary)}
+.sql-output-actions .exec-btn{background:var(--success);color:#fff;font-weight:600;padding:0 10px;font-size:11px;border-radius:4px}
+.sql-output-actions .exec-btn:hover{background:#059669}
+.sql-output-actions .exec-btn:disabled{opacity:.4;cursor:not-allowed}
+.sql-output-actions .exec-btn .exec-icon{font-size:12px}
+.sql-code{padding:12px 16px;font-family:var(--font-mono);font-size:12.5px;line-height:1.7;overflow-x:auto;white-space:pre-wrap;min-height:40px}
+.sql-code[contenteditable="true"]{cursor:text;outline:none}
+.sql-code[contenteditable="true"]:focus{box-shadow:inset 0 0 0 1px var(--accent)}
+.sql-code .kw{color:var(--accent);font-weight:600}
+.sql-code .fn{color:var(--info)}
+.sql-code .str{color:var(--success)}
+.sql-code .num{color:var(--warning)}
+.sql-code .op{color:var(--text-muted)}
+.sql-code .tbl{color:var(--purple);font-style:italic}
+.sql-code .param{color:var(--pink)}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESULTS TABLE
+   ═══════════════════════════════════════════════════════════════ */
+.results-card{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;margin-top:8px}
+.results-header{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--bg-tertiary);border-bottom:1px solid var(--border)}
+.results-header-left{display:flex;align-items:center;gap:8px}
+.results-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--success);font-weight:700}
+.results-count{font-size:10px;color:var(--text-muted);font-family:var(--font-mono)}
+.results-time{font-size:10px;color:var(--warning);font-family:var(--font-mono)}
+.results-header-actions{display:flex;gap:4px}
+.results-header-actions button{height:24px;border-radius:4px;display:flex;align-items:center;justify-content:center;color:var(--text-muted);transition:var(--transition);font-size:11px;padding:0 8px;gap:4px}
+.results-header-actions button:hover{background:var(--bg-hover);color:var(--text-primary)}
+.results-scroll{max-height:320px;overflow:auto}
+.results-table{width:100%;border-collapse:collapse;font-size:12px;font-family:var(--font-mono)}
+.results-table thead{position:sticky;top:0;z-index:1}
+.results-table th{padding:8px 12px;text-align:left;background:var(--bg-tertiary);color:var(--text-secondary);font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.4px;border-bottom:2px solid var(--border);white-space:nowrap}
+.results-table td{padding:6px 12px;border-bottom:1px solid var(--border);color:var(--text-primary);white-space:nowrap;max-width:300px;overflow:hidden;text-overflow:ellipsis}
+.results-table tr:hover td{background:var(--bg-hover)}
+.results-table td.null-val{color:var(--text-muted);font-style:italic}
+.results-table td.num-val{color:var(--warning)}
+.results-table td.bool-val{color:var(--info)}
+.results-update-msg{padding:20px;text-align:center;color:var(--text-secondary);font-size:13px}
+.results-update-msg .update-count{font-size:28px;font-weight:700;color:var(--success);font-family:var(--font-mono);display:block;margin-bottom:4px}
+.results-error{padding:16px;color:var(--danger);font-size:12px;font-family:var(--font-mono);background:rgba(239,68,68,.08)}
+.results-loading{padding:20px;text-align:center;color:var(--text-muted);font-size:12px}
+
+/* ═══════════════════════════════════════════════════════════════
+   METADATA CARDS
+   ═══════════════════════════════════════════════════════════════ */
+.meta-cards{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.meta-card{display:flex;align-items:center;gap:6px;padding:4px 10px;border-radius:6px;font-size:11px;background:var(--bg-tertiary);border:1px solid var(--border)}
+.meta-card .label{color:var(--text-muted)}
+.meta-card .value{font-weight:600;font-family:var(--font-mono)}
+.meta-card.intent .value{color:var(--accent)}
+.meta-card.confidence .value{color:var(--success)}
+.meta-card.latency .value{color:var(--warning)}
+.meta-card.valid .value{color:var(--success)}
+.meta-card.invalid .value{color:var(--danger)}
+
+/* ═══════════════════════════════════════════════════════════════
+   VOTE BREAKDOWN
+   ═══════════════════════════════════════════════════════════════ */
+.vote-section{margin-top:8px;padding:10px 12px;background:var(--bg-tertiary);border-radius:var(--radius);border:1px solid var(--border)}
+.vote-title{font-size:10px;text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);font-weight:700;margin-bottom:8px}
+.vote-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;font-size:11px}
+.vote-strategy{width:130px;color:var(--text-secondary);font-family:var(--font-mono);font-size:10px}
+.vote-bar-bg{flex:1;height:6px;background:var(--bg-input);border-radius:3px;overflow:hidden}
+.vote-bar{height:100%;border-radius:3px;transition:width .4s ease}
+.vote-score{width:55px;text-align:right;font-family:var(--font-mono);font-size:10px;color:var(--text-muted)}
+
+/* ═══════════════════════════════════════════════════════════════
+   FEEDBACK BUTTONS
+   ═══════════════════════════════════════════════════════════════ */
+.feedback-row{display:flex;gap:6px;margin-top:8px}
+.feedback-btn{display:flex;align-items:center;gap:4px;padding:4px 10px;border-radius:6px;font-size:11px;border:1px solid var(--border);transition:var(--transition);color:var(--text-muted)}
+.feedback-btn:hover{border-color:var(--border-focus)}
+.feedback-btn.correct:hover,.feedback-btn.correct.active{border-color:var(--success);color:var(--success);background:rgba(16,185,129,.1)}
+.feedback-btn.incorrect:hover,.feedback-btn.incorrect.active{border-color:var(--danger);color:var(--danger);background:rgba(239,68,68,.1)}
+
+/* ═══════════════════════════════════════════════════════════════
+   INPUT AREA
+   ═══════════════════════════════════════════════════════════════ */
+.input-area{padding:12px 20px;border-top:1px solid var(--border);flex-shrink:0}
+.input-wrapper{display:flex;gap:8px;align-items:flex-end;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-lg);padding:8px 12px;transition:border-color .2s}
+.input-wrapper:focus-within{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-glow)}
+.input-wrapper textarea{flex:1;resize:none;min-height:22px;max-height:120px;line-height:1.5;font-size:13px;padding:2px 0;background:transparent}
+.input-wrapper textarea::placeholder{color:var(--text-muted)}
+.send-btn{width:34px;height:34px;border-radius:8px;background:var(--accent);color:#fff;display:flex;align-items:center;justify-content:center;transition:var(--transition);flex-shrink:0}
+.send-btn:hover{background:var(--accent-hover);transform:scale(1.05)}
+.send-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.input-hint{display:flex;justify-content:space-between;margin-top:6px;font-size:10px;color:var(--text-muted);padding:0 4px}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR — SCHEMA BROWSER
+   ═══════════════════════════════════════════════════════════════ */
+.schema-section{margin-bottom:4px}
+.schema-table-btn{display:flex;align-items:center;gap:8px;width:100%;padding:8px 12px;border-radius:var(--radius);transition:var(--transition);text-align:left}
+.schema-table-btn:hover{background:var(--bg-hover)}
+.schema-table-btn.active{background:var(--accent-glow)}
+.schema-table-icon{width:24px;height:24px;border-radius:6px;background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--purple)}
+.schema-table-name{font-weight:600;font-size:12px}
+.schema-table-cols{font-size:10px;color:var(--text-muted)}
+.schema-columns{padding:4px 0 4px 36px}
+.schema-col{display:flex;align-items:center;gap:8px;padding:4px 12px;border-radius:4px;font-size:11px;transition:var(--transition)}
+.schema-col:hover{background:var(--bg-hover)}
+.schema-col-name{font-family:var(--font-mono);color:var(--text-primary);font-weight:500}
+.schema-col-type{color:var(--text-muted);font-size:10px}
+.schema-col-pk{font-size:9px;padding:1px 4px;border-radius:3px;background:var(--warning);color:#000;font-weight:700}
+.schema-col-nullable{font-size:9px;color:var(--text-muted)}
+.schema-empty{color:var(--text-muted);font-size:12px;text-align:center;padding:24px 12px}
+
+/* ═══════════════════════════════════════════════════════════════
+   RIGHT PANEL — METRICS & DETAILS
+   ═══════════════════════════════════════════════════════════════ */
+.panel-tabs{display:flex;border-bottom:1px solid var(--border);flex-shrink:0}
+.panel-tab{flex:1;padding:10px 8px;font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);text-align:center;border-bottom:2px solid transparent;transition:var(--transition)}
+.panel-tab:hover{color:var(--text-secondary)}
+.panel-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+.panel-body{flex:1;overflow-y:auto;padding:12px}
+
+/* Metric cards */
+.metric-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px}
+.metric-card{background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius);padding:10px 12px}
+.metric-label{font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px}
+.metric-value{font-size:18px;font-weight:700;font-family:var(--font-mono)}
+.metric-value.blue{color:var(--accent)}
+.metric-value.green{color:var(--success)}
+.metric-value.orange{color:var(--warning)}
+.metric-value.red{color:var(--danger)}
+.metric-value.purple{color:var(--purple)}
+
+/* Strategy accuracy */
+.strategy-list{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
+.strategy-item{padding:10px 12px;background:var(--bg-tertiary);border-radius:var(--radius);border:1px solid var(--border)}
+.strategy-name{font-size:11px;font-weight:600;color:var(--text-primary);margin-bottom:6px;font-family:var(--font-mono)}
+.strategy-bar-bg{height:5px;background:var(--bg-input);border-radius:3px;overflow:hidden;margin-bottom:4px}
+.strategy-bar{height:100%;border-radius:3px;transition:width .5s ease}
+.strategy-detail{display:flex;justify-content:space-between;font-size:10px;color:var(--text-muted)}
+
+/* Pattern list */
+.pattern-list{display:flex;flex-direction:column;gap:4px}
+.pattern-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;font-size:11px;background:var(--bg-tertiary);border:1px solid var(--border)}
+.pattern-type{font-family:var(--font-mono);font-weight:600;min-width:90px}
+.pattern-freq{color:var(--text-muted);font-family:var(--font-mono);font-size:10px}
+.pattern-conf{margin-left:auto;font-family:var(--font-mono);color:var(--success);font-size:10px}
+
+/* History */
+.history-item{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:var(--radius);cursor:pointer;transition:var(--transition);margin-bottom:4px}
+.history-item:hover{background:var(--bg-hover)}
+.history-intent{font-size:9px;padding:2px 6px;border-radius:4px;font-weight:700;text-transform:uppercase;white-space:nowrap}
+.history-query{flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.history-time{font-size:10px;color:var(--text-muted);white-space:nowrap}
+
+/* ═══════════════════════════════════════════════════════════════
+   WELCOME SCREEN
+   ═══════════════════════════════════════════════════════════════ */
+.welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;text-align:center;padding:40px;animation:fadeIn .5s ease}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.welcome-icon{width:64px;height:64px;border-radius:16px;background:linear-gradient(135deg,var(--accent),var(--purple));display:flex;align-items:center;justify-content:center;font-size:28px;color:#fff;margin-bottom:20px;box-shadow:0 8px 32px var(--accent-glow)}
+.welcome h2{font-size:22px;font-weight:700;margin-bottom:8px}
+.welcome p{color:var(--text-secondary);font-size:13px;max-width:560px;line-height:1.6;margin-bottom:24px}
+.welcome-features{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;max-width:700px}
+.welcome-feature{padding:14px;border-radius:var(--radius-lg);background:var(--bg-tertiary);border:1px solid var(--border);text-align:center;transition:var(--transition)}
+.welcome-feature:hover{border-color:var(--accent);transform:translateY(-2px)}
+.welcome-feature-icon{font-size:22px;margin-bottom:6px}
+.welcome-feature-label{font-size:11px;font-weight:600;color:var(--text-primary)}
+.welcome-feature-desc{font-size:10px;color:var(--text-muted);margin-top:4px}
+
+/* ═══════════════════════════════════════════════════════════════
+   COMMAND PALETTE
+   ═══════════════════════════════════════════════════════════════ */
+.cmd-palette-overlay{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;display:none;align-items:flex-start;justify-content:center;padding-top:20vh}
+.cmd-palette-overlay.show{display:flex}
+.cmd-palette{width:520px;max-width:90vw;background:var(--bg-secondary);border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:0 20px 60px rgba(0,0,0,.5);overflow:hidden;animation:cmdIn .15s ease}
+@keyframes cmdIn{from{opacity:0;transform:translateY(-10px) scale(.98)}to{opacity:1;transform:translateY(0) scale(1)}}
+.cmd-palette input{width:100%;padding:14px 18px;font-size:14px;border-bottom:1px solid var(--border);background:transparent}
+.cmd-palette input::placeholder{color:var(--text-muted)}
+.cmd-results{max-height:300px;overflow-y:auto}
+.cmd-item{display:flex;align-items:center;gap:10px;padding:10px 18px;cursor:pointer;transition:var(--transition)}
+.cmd-item:hover,.cmd-item.selected{background:var(--bg-hover)}
+.cmd-item-icon{width:28px;height:28px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:12px;background:var(--bg-tertiary);font-weight:600}
+.cmd-item-text{flex:1;font-size:12px}
+.cmd-item-shortcut{font-size:10px;color:var(--text-muted);font-family:var(--font-mono)}
+
+/* ═══════════════════════════════════════════════════════════════
+   TOAST NOTIFICATIONS
+   ═══════════════════════════════════════════════════════════════ */
+.toast-container{position:fixed;bottom:20px;right:20px;z-index:300;display:flex;flex-direction:column;gap:8px}
+.toast{padding:10px 16px;border-radius:var(--radius);background:var(--bg-secondary);border:1px solid var(--border);box-shadow:var(--shadow);font-size:12px;display:flex;align-items:center;gap:8px;animation:toastIn .3s ease;max-width:360px}
+@keyframes toastIn{from{opacity:0;transform:translateX(20px)}to{opacity:1;transform:translateX(0)}}
+.toast.success{border-left:3px solid var(--success)}
+.toast.error{border-left:3px solid var(--danger)}
+.toast.info{border-left:3px solid var(--info)}
+
+/* ═══════════════════════════════════════════════════════════════
+   TYPING INDICATOR
+   ═══════════════════════════════════════════════════════════════ */
+.typing-indicator{display:flex;gap:4px;padding:8px 14px}
+.typing-dot{width:6px;height:6px;border-radius:50%;background:var(--text-muted);animation:typingBounce 1.4s infinite}
+.typing-dot:nth-child(2){animation-delay:.2s}
+.typing-dot:nth-child(3){animation-delay:.4s}
+@keyframes typingBounce{0%,60%,100%{transform:translateY(0)}30%{transform:translateY(-6px)}}
+
+/* ═══════════════════════════════════════════════════════════════
+   STATUS BAR
+   ═══════════════════════════════════════════════════════════════ */
+.status-bar{display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:24px;background:var(--bg-secondary);border-top:1px solid var(--border);flex-shrink:0;font-size:10px;color:var(--text-muted)}
+.status-left,.status-right{display:flex;align-items:center;gap:12px}
+.status-dot{width:6px;height:6px;border-radius:50%;background:var(--success)}
+.status-dot.offline{background:var(--danger)}
+.status-db{color:var(--purple);font-weight:600}
+
+/* ═══════════════════════════════════════════════════════════════
+   RESPONSIVE
+   ═══════════════════════════════════════════════════════════════ */
+@media(max-width:1100px){.sidebar{width:0;border:none;overflow:hidden}.panel-right{width:0;border:none;overflow:hidden}}
+@media(max-width:768px){.header{padding:0 12px}.chat-messages{padding:12px}.input-area{padding:8px 12px}.welcome-features{grid-template-columns:1fr 1fr}.db-info{display:none}.db-selector select{min-width:120px}}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- ══════ HEADER ══════ -->
+  <header class="header">
+    <div class="header-left">
+      <div class="logo">
+        <div class="logo-icon">SQL</div>
+        <span class="logo-text">Enterprise SQL Assistant</span>
+        <span class="logo-version">V3</span>
+      </div>
+      <!-- Database Selector -->
+      <div class="db-selector-wrap">
+        <div class="db-selector">
+          <select id="db-select" onchange="onDatabaseChange(this.value)">
+            <option value="">Chargement...</option>
+          </select>
+        </div>
+        <div class="db-info" id="db-info">
+          <div class="db-desc" id="db-desc">Selectionnez une base</div>
+          <div class="db-meta" id="db-meta"><span class="db-conn-dot on" id="db-conn-dot"></span><span id="db-table-count">0 tables</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="header-right">
+      <button class="header-btn" id="btn-sidebar" title="Schema Browser" onclick="toggleSidebar()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="18"/><rect x="14" y="3" width="7" height="18"/></svg>
+      </button>
+      <button class="header-btn active" id="btn-panel" title="Panneau Details" onclick="togglePanel()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+      </button>
+      <button class="header-btn" id="btn-theme" title="Changer le theme" onclick="toggleTheme()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
+      </button>
+      <button class="header-btn" id="btn-cmd" title="Commandes (Ctrl+K)" onclick="showCmdPalette()">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="main">
+    <!-- ══════ LEFT SIDEBAR — SCHEMA ══════ -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <h3 id="schema-title">Schema Browser</h3>
+        <button onclick="toggleSidebar()" style="color:var(--text-muted)" title="Fermer">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="sidebar-content" id="schema-content">
+        <div class="schema-empty">Chargement du schema...</div>
+      </div>
+    </aside>
+
+    <!-- ══════ CENTER — CHAT ══════ -->
+    <main class="content">
+      <div class="chat-header">
+        <div class="chat-header-info">
+          <span class="dot" id="chat-dot"></span>
+          <div>
+            <div class="chat-header-title">Jakarta Agentic AI Pipeline</div>
+            <div class="chat-header-subtitle">Perceive &rarr; Reason &rarr; Act &rarr; Reflect</div>
+          </div>
+        </div>
+        <div class="chat-actions">
+          <button class="header-btn" title="Effacer la conversation" onclick="clearChat()">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="chat-messages" id="chat-messages">
+        <div class="welcome" id="welcome-screen">
+          <div class="welcome-icon">SQL</div>
+          <h2>Enterprise SQL Assistant V3</h2>
+          <p>Transformez vos requetes en langage naturel en SQL optimise. Multi-base de donnees, execution directe, resultats en temps reel. Zero LLM, Zero GPU &mdash; Pure Java 26 + Jakarta AI.</p>
+          <div class="welcome-features">
+            <div class="welcome-feature">
+              <div class="welcome-feature-icon">&#9889;</div>
+              <div class="welcome-feature-label">Ultra-Rapide</div>
+              <div class="welcome-feature-desc">Pipeline deterministe sous 100&mu;s</div>
+            </div>
+            <div class="welcome-feature">
+              <div class="welcome-feature-icon">&#127919;</div>
+              <div class="welcome-feature-label">5 Strategies</div>
+              <div class="welcome-feature-desc">Ensemble Resolver par vote</div>
+            </div>
+            <div class="welcome-feature">
+              <div class="welcome-feature-icon">&#128451;</div>
+              <div class="welcome-feature-label">Multi-DB</div>
+              <div class="welcome-feature-desc">Bases de donnees multiples</div>
+            </div>
+            <div class="welcome-feature">
+              <div class="welcome-feature-icon">&#9654;</div>
+              <div class="welcome-feature-label">Execution</div>
+              <div class="welcome-feature-desc">SQL editable et executable</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="input-area">
+        <div class="input-wrapper">
+          <textarea id="query-input" rows="1" placeholder="Decrivez votre requete en langage naturel... (ex: montrez-moi tous les utilisateurs actifs)" onkeydown="handleInputKey(event)" oninput="autoResize(this)"></textarea>
+          <button class="send-btn" id="send-btn" onclick="sendQuery()" title="Envoyer (Enter)">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          </button>
+        </div>
+        <div class="input-hint">
+          <span>Enter pour envoyer &middot; Shift+Enter pour nouvelle ligne &middot; Ctrl+K commandes</span>
+          <span id="char-count">0 / 2000</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- ══════ RIGHT PANEL — DETAILS ══════ -->
+    <aside class="panel-right" id="panel-right">
+      <div class="panel-tabs">
+        <button class="panel-tab active" data-tab="metrics" onclick="switchTab(this)">Metrics</button>
+        <button class="panel-tab" data-tab="strategies" onclick="switchTab(this)">Strategies</button>
+        <button class="panel-tab" data-tab="patterns" onclick="switchTab(this)">Patterns</button>
+        <button class="panel-tab" data-tab="history" onclick="switchTab(this)">Historique</button>
+      </div>
+      <div class="panel-body" id="panel-body">
+        <div id="tab-metrics" class="tab-content">
+          <div class="metric-grid" id="metrics-grid"></div>
+        </div>
+        <div id="tab-strategies" class="tab-content" style="display:none">
+          <div class="strategy-list" id="strategy-list"></div>
+        </div>
+        <div id="tab-patterns" class="tab-content" style="display:none">
+          <div class="pattern-list" id="pattern-list"></div>
+        </div>
+        <div id="tab-history" class="tab-content" style="display:none">
+          <div id="history-list"></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ══════ STATUS BAR ══════ -->
+  <div class="status-bar">
+    <div class="status-left">
+      <span style="display:flex;align-items:center;gap:4px"><span class="status-dot" id="status-dot"></span> <span id="status-mode">Pret</span></span>
+      <span>Ensemble: 5 strategies</span>
+      <span>BD: <span class="status-db" id="status-db">--</span></span>
+    </div>
+    <div class="status-right">
+      <span id="status-latency">Latence: --</span>
+      <span>Java 26 + Jakarta AI</span>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ COMMAND PALETTE ══════ -->
+<div class="cmd-palette-overlay" id="cmd-overlay" onclick="hideCmdPalette(event)">
+  <div class="cmd-palette" onclick="event.stopPropagation()">
+    <input type="text" id="cmd-input" placeholder="Tapez une commande..." oninput="filterCommands(this.value)" onkeydown="handleCmdKey(event)">
+    <div class="cmd-results" id="cmd-results"></div>
+  </div>
+</div>
+
+<!-- ══════ TOASTS ══════ -->
+<div class="toast-container" id="toast-container"></div>
+
+<script>
+/* ═══════════════════════════════════════════════════════════════════════
+   DATA & STATE
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const INTENT_COLORS = {
+  Select:'#3b82f6',Insert:'#10b981',Update:'#f59e0b',Delete:'#ef4444',
+  CreateTable:'#8b5cf6',AlterTable:'#06b6d4',DropTable:'#ec4899',
+  Join:'#6366f1',Aggregate:'#14b8a6',Subquery:'#a855f7',
+  Explain:'#0ea5e9',SchemaInfo:'#84cc16',Unknown:'#6b7280'
+};
+
+const STRATEGY_COLORS = {
+  intent_graph:'#3b82f6',lsh_multi_probe:'#8b5cf6',syntactic_parser:'#10b981',
+  thesaurus_hash:'#f59e0b',regex_rules:'#ef4444'
+};
+
+/* Default fallback schema per-database */
+const FALLBACK_SCHEMAS = {
+  ecommerce: {
+    users: {
+      columns: [
+        {name:'id',type:'BIGINT',pk:true,nullable:false},
+        {name:'username',type:'VARCHAR(255)',pk:false,nullable:false},
+        {name:'email',type:'VARCHAR(512)',pk:false,nullable:false},
+        {name:'created_at',type:'TIMESTAMP',pk:false,nullable:true},
+        {name:'active',type:'BOOLEAN',pk:false,nullable:true}
+      ], indexes:['idx_users_username','idx_users_email']
+    },
+    orders: {
+      columns: [
+        {name:'id',type:'BIGINT',pk:true,nullable:false},
+        {name:'user_id',type:'BIGINT',pk:false,nullable:false},
+        {name:'product_id',type:'BIGINT',pk:false,nullable:false},
+        {name:'quantity',type:'INTEGER',pk:false,nullable:false},
+        {name:'total_price',type:'DECIMAL(10,2)',pk:false,nullable:false},
+        {name:'order_date',type:'TIMESTAMP',pk:false,nullable:false},
+        {name:'status',type:'VARCHAR(50)',pk:false,nullable:false}
+      ], indexes:['idx_orders_user_id','idx_orders_status']
+    },
+    products: {
+      columns: [
+        {name:'id',type:'BIGINT',pk:true,nullable:false},
+        {name:'name',type:'VARCHAR(512)',pk:false,nullable:false},
+        {name:'description',type:'TEXT',pk:false,nullable:true},
+        {name:'price',type:'DECIMAL(10,2)',pk:false,nullable:false},
+        {name:'category',type:'VARCHAR(100)',pk:false,nullable:true},
+        {name:'stock',type:'INTEGER',pk:false,nullable:false}
+      ], indexes:['idx_products_category']
+    }
+  },
+  analytics: {
+    events: {
+      columns: [
+        {name:'id',type:'BIGINT',pk:true,nullable:false},
+        {name:'event_type',type:'VARCHAR(100)',pk:false,nullable:false},
+        {name:'user_id',type:'BIGINT',pk:false,nullable:true},
+        {name:'session_id',type:'VARCHAR(255)',pk:false,nullable:false},
+        {name:'properties',type:'JSON',pk:false,nullable:true},
+        {name:'timestamp',type:'TIMESTAMP',pk:false,nullable:false}
+      ], indexes:['idx_events_type','idx_events_timestamp']
+    },
+    sessions: {
+      columns: [
+        {name:'id',type:'VARCHAR(255)',pk:true,nullable:false},
+        {name:'user_id',type:'BIGINT',pk:false,nullable:true},
+        {name:'started_at',type:'TIMESTAMP',pk:false,nullable:false},
+        {name:'ended_at',type:'TIMESTAMP',pk:false,nullable:true},
+        {name:'page_views',type:'INTEGER',pk:false,nullable:true},
+        {name:'device',type:'VARCHAR(50)',pk:false,nullable:true}
+      ], indexes:['idx_sessions_user']
+    }
+  },
+  hr: {
+    employees: {
+      columns: [
+        {name:'id',type:'BIGINT',pk:true,nullable:false},
+        {name:'first_name',type:'VARCHAR(100)',pk:false,nullable:false},
+        {name:'last_name',type:'VARCHAR(100)',pk:false,nullable:false},
+        {name:'department',type:'VARCHAR(100)',pk:false,nullable:true},
+        {name:'salary',type:'DECIMAL(10,2)',pk:false,nullable:true},
+        {name:'hire_date',type:'DATE',pk:false,nullable:false}
+      ], indexes:['idx_emp_dept']
+    },
+    departments: {
+      columns: [
+        {name:'id',type:'BIGINT',pk:true,nullable:false},
+        {name:'name',type:'VARCHAR(100)',pk:false,nullable:false},
+        {name:'budget',type:'DECIMAL(12,2)',pk:false,nullable:true},
+        {name:'manager_id',type:'BIGINT',pk:false,nullable:true}
+      ], indexes:[]
+    }
+  }
+};
+
+/* Application state */
+const state = {
+  databases: [],
+  selectedDb: '',
+  schema: {},
+  serverAvailable: false,
+  history: [],
+  metrics: {totalQueries:0,successfulQueries:0,avgLatency:0,totalLatency:0,correctFeedback:0,incorrectFeedback:0},
+  strategyAccuracy:{intent_graph:.88,lsh_multi_probe:.82,syntactic_parser:.92,thesaurus_hash:.78,regex_rules:.70},
+  strategyWeights:{intent_graph:1.0,lsh_multi_probe:.9,syntactic_parser:1.2,thesaurus_hash:.8,regex_rules:.6},
+  patterns:[],
+  expandedTables:new Set(),
+  activeTab:'metrics',
+  isProcessing:false,
+  lastQueryId: null,
+  lastSql: ''
+};
+
+/* ═══════════════════════════════════════════════════════════════════════
+   API LAYER
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function apiGet(path) {
+  try {
+    const res = await fetch(path);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    state.serverAvailable = true;
+    return await res.json();
+  } catch (e) {
+    state.serverAvailable = false;
+    throw e;
+  }
+}
+
+async function apiPost(path, body) {
+  try {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(body)
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    state.serverAvailable = true;
+    return await res.json();
+  } catch (e) {
+    state.serverAvailable = false;
+    throw e;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   DATABASE LOADING
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function loadDatabases() {
+  try {
+    const data = await apiGet('/api/databases');
+    state.databases = data.databases || [];
+    const sel = document.getElementById('db-select');
+    sel.innerHTML = '';
+    if (state.databases.length === 0) {
+      sel.innerHTML = '<option value="">Aucune base</option>';
+      loadFallbackDatabases();
+      return;
+    }
+    for (const db of state.databases) {
+      const opt = document.createElement('option');
+      opt.value = db.name;
+      opt.textContent = db.name;
+      sel.appendChild(opt);
+    }
+    state.selectedDb = state.databases[0].name;
+    sel.value = state.selectedDb;
+    updateDbInfo();
+    await loadSchema(state.selectedDb);
+    updateStatusBar();
+  } catch (e) {
+    console.warn('Server unavailable, using fallback databases:', e.message);
+    loadFallbackDatabases();
+    updateStatusBar();
+  }
+}
+
+function loadFallbackDatabases() {
+  state.databases = [
+    {name:'ecommerce',description:'Base e-commerce principal',connected:true,tableCount:3},
+    {name:'analytics',description:'Donnees analytiques et tracking',connected:true,tableCount:2},
+    {name:'hr',description:'Ressources humaines',connected:true,tableCount:2}
+  ];
+  const sel = document.getElementById('db-select');
+  sel.innerHTML = '';
+  for (const db of state.databases) {
+    const opt = document.createElement('option');
+    opt.value = db.name;
+    opt.textContent = db.name;
+    sel.appendChild(opt);
+  }
+  state.selectedDb = 'ecommerce';
+  sel.value = state.selectedDb;
+  updateDbInfo();
+  state.schema = FALLBACK_SCHEMAS.ecommerce || {};
+  renderSchema();
+}
+
+function onDatabaseChange(dbName) {
+  if (!dbName) return;
+  state.selectedDb = dbName;
+  updateDbInfo();
+  updateStatusBar();
+  loadSchema(dbName);
+}
+
+function updateDbInfo() {
+  const db = state.databases.find(d => d.name === state.selectedDb);
+  if (!db) return;
+  document.getElementById('db-desc').textContent = db.description || '';
+  document.getElementById('db-table-count').textContent = (db.tableCount || 0) + ' tables';
+  const dot = document.getElementById('db-conn-dot');
+  dot.className = 'db-conn-dot ' + (db.connected ? 'on' : 'off');
+}
+
+async function loadSchema(dbName) {
+  try {
+    const data = await apiGet('/api/schema?db=' + encodeURIComponent(dbName));
+    state.schema = data.tables || {};
+    renderSchema();
+  } catch (e) {
+    console.warn('Schema API unavailable, using fallback:', e.message);
+    state.schema = FALLBACK_SCHEMAS[dbName] || {};
+    renderSchema();
+  }
+}
+
+function updateStatusBar() {
+  const dot = document.getElementById('status-dot');
+  const mode = document.getElementById('status-mode');
+  const db = document.getElementById('status-db');
+  dot.className = 'status-dot' + (state.serverAvailable ? '' : ' offline');
+  mode.textContent = state.serverAvailable ? 'Connecte' : 'Hors ligne (simulation)';
+  db.textContent = state.selectedDb || '--';
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SIMULATION ENGINE (fallback when server unavailable)
+   Mirrors the Java backend: 5-strategy ensemble resolver + SQL generator
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function resolveIntent(query) {
+  const q = query.toLowerCase();
+  const votes = [];
+  const weights = state.strategyWeights;
+
+  /* Strategy 1: Intent Graph */
+  let igIntent = 'Unknown', igConf = .1;
+  if (/\b(select|show|get|find|list|display|montre|affiche|cherche|liste)\b/.test(q) && /\b(from|de|dans)\b/.test(q)) { igIntent='Select'; igConf=.85; }
+  else if (/\b(how many|combien|count|nombre)\b/.test(q)) { igIntent='Aggregate'; igConf=.8; }
+  else if (/\b(total|somme|sum)\b/.test(q)) { igIntent='Aggregate'; igConf=.75; }
+  else if (/\b(insert|add|ajoute|ajouter|creer un)\b/.test(q)) { igIntent='Insert'; igConf=.85; }
+  else if (/\b(update|modify|change|modifie|modifier|mettre a jour)\b/.test(q)) { igIntent='Update'; igConf=.8; }
+  else if (/\b(delete|remove|supprime|supprimer|efface)\b/.test(q)) { igIntent='Delete'; igConf=.85; }
+  else if (/\b(create table|cre.*table|nouvelle table)\b/.test(q)) { igIntent='CreateTable'; igConf=.9; }
+  else if (/\b(alter|modifier.*table)\b/.test(q)) { igIntent='AlterTable'; igConf=.9; }
+  else if (/\b(drop|supprimer.*table)\b/.test(q)) { igIntent='DropTable'; igConf=.9; }
+  else if (/\b(join|combine|fusionne|joindre|combiner)\b/.test(q)) { igIntent='Join'; igConf=.7; }
+  else if (/\b(explain|analyse|explique)\b/.test(q)) { igIntent='Explain'; igConf=.9; }
+  else if (/\b(describe|schema|structure|decris|colonnes)\b/.test(q)) { igIntent='SchemaInfo'; igConf=.8; }
+  votes.push({strategy:'intent_graph',intentType:igIntent,rawConfidence:igConf,weightedScore:igConf*weights.intent_graph});
+
+  /* Strategy 2: LSH Multi-Probe */
+  let lshIntent = 'Unknown', lshConf = .1;
+  if (/\b(select|show|get|affiche|montre|liste|cherche)\b/.test(q)) { lshIntent='Select'; lshConf=.8; }
+  else if (/\b(count|combien|nombre|total|somme)\b/.test(q)) { lshIntent='Aggregate'; lshConf=.75; }
+  else if (/\b(insert|ajout|add)\b/.test(q)) { lshIntent='Insert'; lshConf=.82; }
+  else if (/\b(update|modif|change)\b/.test(q)) { lshIntent='Update'; lshConf=.78; }
+  else if (/\b(delete|supprim|remove)\b/.test(q)) { lshIntent='Delete'; lshConf=.82; }
+  else if (/\b(join|combin|fusion)\b/.test(q)) { lshIntent='Join'; lshConf=.68; }
+  votes.push({strategy:'lsh_multi_probe',intentType:lshIntent,rawConfidence:lshConf,weightedScore:lshConf*weights.lsh_multi_probe});
+
+  /* Strategy 3: Syntactic Parser (SVO extraction) */
+  let synIntent = 'Unknown', synConf = .1;
+  const verbMap = {
+    select:'Select',get:'Select',show:'Select',find:'Select',list:'Select',
+    affiche:'Select',montre:'Select',cherche:'Select',liste:'Select',
+    insert:'Insert',add:'Insert',ajoute:'Insert',ajouter:'Insert',
+    update:'Update',modify:'Update',change:'Update',modifie:'Update',modifier:'Update',
+    delete:'Delete',remove:'Delete',supprime:'Delete',supprimer:'Delete',efface:'Delete',
+    create:'CreateTable',creer:'CreateTable',
+    join:'Join',combine:'Join',fusionne:'Join',joindre:'Join',
+    explain:'Explain',explique:'Explain',analyse:'Explain',
+    describe:'SchemaInfo',decris:'SchemaInfo'
+  };
+  const words = q.split(/\s+/);
+  for (const w of words) { if (verbMap[w]) { synIntent=verbMap[w]; synConf=.88; break; } }
+  if (synIntent==='Unknown' && /\b(combien|nombre|count|total|moyenne|average|somme|sum|max|min)\b/.test(q)) { synIntent='Aggregate'; synConf=.85; }
+  votes.push({strategy:'syntactic_parser',intentType:synIntent,rawConfidence:synConf,weightedScore:synConf*weights.syntactic_parser});
+
+  /* Strategy 4: Thesaurus-expanded SimHash */
+  let thesIntent = 'Unknown', thesConf = .1;
+  const thesMap = {
+    utilisateurs:'Select',clients:'Select',commandes:'Select',produits:'Select',
+    donnees:'Select',enregistrements:'Select',lignes:'Select',
+    nombre:'Aggregate',total:'Aggregate',moyenne:'Aggregate',somme:'Aggregate',
+    ajouter:'Insert',inserer:'Insert',modifier:'Update',supprimer:'Delete',
+    joindre:'Join',combiner:'Join',fusionner:'Join',expliquer:'Explain',decrire:'SchemaInfo'
+  };
+  for (const [k,v] of Object.entries(thesMap)) { if (q.includes(k)) { thesIntent=v; thesConf=.76; break; } }
+  votes.push({strategy:'thesaurus_hash',intentType:thesIntent,rawConfidence:thesConf,weightedScore:thesConf*weights.thesaurus_hash});
+
+  /* Strategy 5: Regex Rules */
+  let regIntent = 'Unknown', regConf = .1;
+  const rules = [
+    [/\b(select|show|get|find|list|display)\b.*\b(from|in)\b/,'Select',.85],
+    [/\b(insert|add|put)\b.*\b(into|to|in)\b/,'Insert',.85],
+    [/\b(update|modify|change)\b.*\b(set)\b/,'Update',.85],
+    [/\b(delete|remove)\b.*\b(from)\b/,'Delete',.85],
+    [/\b(create|make)\s+(table)\b/,'CreateTable',.9],
+    [/\b(alter|modify)\s+(table)\b/,'AlterTable',.9],
+    [/\b(drop|remove)\s+(table)\b/,'DropTable',.9],
+    [/\b(join|combine|merge)\b/,'Join',.7],
+    [/\b(count|sum|average|avg|min|max|how many|combien)\b/,'Aggregate',.8],
+    [/\b(explain|analyse)\b/,'Explain',.9],
+    [/\b(describe|schema|colonnes)\b/,'SchemaInfo',.8],
+    [/\b(montre|affiche|liste|cherche)\b/,'Select',.8],
+    [/\b(ajoute|insere|creer)\b/,'Insert',.8],
+    [/\b(modifie|change|met a jour)\b/,'Update',.8],
+    [/\b(supprime|efface|retire)\b/,'Delete',.8],
+    [/\b(combien|nombre|total|somme|moyenne)\b/,'Aggregate',.8],
+    [/\b(joindre|combiner|fusionner)\b/,'Join',.75],
+    [/\b(explique|analyse)\b/,'Explain',.85],
+    [/\b(decris|structure|colonnes de)\b/,'SchemaInfo',.8],
+  ];
+  for (const [pat,intent,conf] of rules) { if (pat.test(q)) { regIntent=intent; regConf=conf; break; } }
+  votes.push({strategy:'regex_rules',intentType:regIntent,rawConfidence:regConf,weightedScore:regConf*weights.regex_rules});
+
+  /* Aggregate votes */
+  const scores = {};
+  const bestRaw = {};
+  for (const v of votes) {
+    scores[v.intentType] = (scores[v.intentType]||0) + v.weightedScore;
+    bestRaw[v.intentType] = Math.max(bestRaw[v.intentType]||0, v.rawConfidence);
+  }
+  const sorted = Object.entries(scores).sort((a,b)=>b[1]-a[1]);
+  const winner = sorted[0] || ['Unknown',0];
+  const total = Object.values(scores).reduce((s,v)=>s+v,0);
+  const ensembleConf = total > 0 ? winner[1]/total : 0;
+  const calibrated = ensembleConf*.6 + (bestRaw[winner[0]]||.5)*.4;
+
+  return {intent:winner[0],confidence:calibrated,votes,ensembleConf,scores};
+}
+
+function generateSQL(query, intent) {
+  const q = query.toLowerCase();
+  const schema = state.schema;
+
+  const resolveTable = (s) => {
+    const tableNames = Object.keys(schema);
+    if (tableNames.length === 0) return 'unknown_table';
+    for (const t of tableNames) { if (s.includes(t.toLowerCase()) || s.includes(t)) return t; }
+    /* French / English aliases */
+    const map = {};
+    for (const t of tableNames) {
+      map[t.toLowerCase()] = t;
+    }
+    const aliases = {
+      users:'users',user:'users',utilisateur:'users',utilisateurs:'users',
+      orders:'orders',order:'orders',commande:'orders',commandes:'orders',
+      products:'products',product:'products',produit:'products',produits:'products',
+      events:'events',event:'events',evenement:'events',
+      sessions:'sessions',session:'sessions',
+      employees:'employees',employee:'employees',employe:'employees',employes:'employees',
+      departments:'departments',department:'departments',departement:'departments'
+    };
+    for (const [k,v] of Object.entries(aliases)) { if (s.includes(k) && map[v]) return map[v]; }
+    return tableNames[0];
+  };
+
+  const extractConditions = () => {
+    const conds = [];
+    if (/\b(active|actif)\b/.test(q)) conds.push('active = true');
+    if (/\b(inactive|inactif)\b/.test(q)) conds.push('active = false');
+    if (/greater than|plus de|superieur|>\s*\d+|more than/.test(q)) {
+      const m = q.match(/(\d+)/); if (m) conds.push('price > '+m[1]);
+    }
+    if (/less than|moins de|inferieur|<\s*\d+/.test(q)) {
+      const m = q.match(/(\d+)/); if (m) conds.push('price < '+m[1]);
+    }
+    if (/\b(recent|recente|dernier|last)\b/.test(q)) conds.push("created_at >= CURRENT_DATE - INTERVAL '30 days'");
+    if (/status.*=|etat.*=/.test(q)) {
+      const m = q.match(/(?:status|etat)\s*(?:=|est)\s*['"]?(\w+)/); if (m) conds.push("status = '"+m[1]+"'");
+    }
+    return conds;
+  };
+
+  switch (intent) {
+    case 'Select': {
+      const table = resolveTable(q);
+      const cols = /\b(all|tous|tout|\*)\b/.test(q) ? '*' :
+        schema[table]?.columns.map(c=>c.name).join(', ') || '*';
+      const conds = extractConditions();
+      const where = conds.length ? '\nWHERE ' + conds.join('\n  AND ') : '';
+      const orderMatch = q.match(/\b(order by|trie|sorted|tri)\s+(?:by\s+)?(\w+)/);
+      const order = orderMatch ? '\nORDER BY '+orderMatch[2] : '';
+      const limitMatch = q.match(/\b(top|limit|premier)\s+(\d+)/);
+      const limit = limitMatch ? '\nLIMIT '+limitMatch[2] : '';
+      return 'SELECT '+cols+'\nFROM '+table+where+order+limit+';';
+    }
+    case 'Insert': {
+      const table = resolveTable(q);
+      const cols = schema[table]?.columns.filter(c=>!c.pk).map(c=>c.name) || ['name','value'];
+      const vals = cols.map(c=>':'+c).join(', ');
+      return 'INSERT INTO '+table+' ('+cols.join(', ')+')\nVALUES ('+vals+');';
+    }
+    case 'Update': {
+      const table = resolveTable(q);
+      const conds = extractConditions();
+      const where = conds.length ? '\nWHERE '+conds.join('\n  AND ') : '\nWHERE id = :id';
+      return 'UPDATE '+table+'\nSET :column = :value'+where+';';
+    }
+    case 'Delete': {
+      const table = resolveTable(q);
+      const conds = extractConditions();
+      const where = conds.length ? '\nWHERE '+conds.join('\n  AND ') : '\nWHERE id = :id';
+      return 'DELETE FROM '+table+where+';';
+    }
+    case 'CreateTable': {
+      const nameMatch = q.match(/(?:table)\s+(\w+)/);
+      const name = nameMatch ? nameMatch[1] : 'new_table';
+      return 'CREATE TABLE '+name+' (\n  id BIGINT PRIMARY KEY,\n  name VARCHAR(255) NOT NULL,\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP\n);';
+    }
+    case 'Join': {
+      const tables = Object.keys(schema);
+      if (tables.length >= 3) {
+        return 'SELECT u.*, o.total_price, p.name\nFROM '+tables[0]+' u\nINNER JOIN '+tables[1]+' o ON u.id = o.user_id\nINNER JOIN '+tables[2]+' p ON o.product_id = p.id;';
+      } else if (tables.length >= 2) {
+        return 'SELECT a.*, b.*\nFROM '+tables[0]+' a\nINNER JOIN '+tables[1]+' b ON a.id = b.'+tables[0].toLowerCase()+'_id;';
+      }
+      return 'SELECT * FROM '+resolveTable(q)+';';
+    }
+    case 'Aggregate': {
+      const table = resolveTable(q);
+      let fn = 'COUNT';
+      if (/\b(sum|total|somme)\b/.test(q)) fn = 'SUM';
+      else if (/\b(average|avg|moyenne|mean)\b/.test(q)) fn = 'AVG';
+      else if (/\b(max|maximum|highest|plus grand)\b/.test(q)) fn = 'MAX';
+      else if (/\b(min|minimum|lowest|plus petit)\b/.test(q)) fn = 'MIN';
+      const groupMatch = q.match(/\b(group by|par|by)\s+(\w+)/);
+      const group = groupMatch ? '\nGROUP BY '+groupMatch[2] : '';
+      const conds = extractConditions();
+      const where = conds.length ? '\nWHERE '+conds.join('\n  AND ') : '';
+      return 'SELECT '+fn+'(*), '+(groupMatch?groupMatch[2]:'1')+'\nFROM '+table+where+group+';';
+    }
+    case 'Explain':
+      return 'EXPLAIN ANALYZE\nSELECT * FROM '+resolveTable(q)+' WHERE id = :id;';
+    case 'SchemaInfo': {
+      const table = resolveTable(q);
+      const cols = schema[table]?.columns.map(c=>'  '+c.name+' '+c.type+(c.pk?' PRIMARY KEY':'')+(c.nullable?'':' NOT NULL')).join(',\n') || 'id BIGINT PRIMARY KEY';
+      return '-- Schema: '+table+'\n-- Columns:\n'+cols;
+    }
+    default:
+      return '-- Impossible de resoudre l\'intent pour: "'+query+'"\n-- Reessayez en reformulant votre requete.';
+  }
+}
+
+function simulateExecute(sql) {
+  /* Simple simulation of query execution */
+  const isSelect = /^\s*SELECT/i.test(sql);
+  const isInsert = /^\s*INSERT/i.test(sql);
+  const isUpdate = /^\s*UPDATE/i.test(sql);
+  const isDelete = /^\s*DELETE/i.test(sql);
+
+  if (isSelect) {
+    const tableMatch = sql.match(/FROM\s+(\w+)/i);
+    const table = tableMatch ? tableMatch[1] : 'data';
+    const cols = state.schema[table]?.columns || [
+      {name:'id',type:'BIGINT'},{name:'name',type:'VARCHAR'},{name:'value',type:'INTEGER'}
+    ];
+    const rows = [];
+    const count = 3 + Math.floor(Math.random() * 8);
+    for (let i = 0; i < count; i++) {
+      const row = {};
+      for (const c of cols) {
+        if (c.type.startsWith('BIGINT') || c.type === 'INTEGER') row[c.name] = Math.floor(Math.random()*1000);
+        else if (c.type.startsWith('DECIMAL') || c.type.startsWith('NUMERIC')) row[c.name] = (Math.random()*1000).toFixed(2);
+        else if (c.type === 'BOOLEAN') row[c.name] = Math.random() > 0.5;
+        else if (c.type.includes('TIMESTAMP') || c.type === 'DATE') row[c.name] = '2024-0'+(1+Math.floor(Math.random()*9))+'-'+String(10+Math.floor(Math.random()*20)).padStart(2,'0');
+        else row[c.name] = c.name + '_' + (i+1);
+      }
+      rows.push(row);
+    }
+    return {success:true, type:'resultSet', columns: cols.map(c=>({name:c.name,type:c.type})), rows, rowCount:rows.length};
+  }
+  if (isInsert) return {success:true, type:'update', updateCount:1};
+  if (isUpdate) return {success:true, type:'update', updateCount: Math.floor(Math.random()*10)+1};
+  if (isDelete) return {success:true, type:'update', updateCount: Math.floor(Math.random()*5)+1};
+  return {success:true, type:'update', updateCount:0};
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SQL SYNTAX HIGHLIGHTING
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function highlightSQL(sql) {
+  const keywords = /\b(SELECT|FROM|WHERE|AND|OR|NOT|IN|JOIN|INNER|LEFT|RIGHT|OUTER|ON|INSERT|INTO|VALUES|UPDATE|SET|DELETE|CREATE|TABLE|ALTER|DROP|ORDER|BY|GROUP|HAVING|LIMIT|OFFSET|AS|DISTINCT|BETWEEN|LIKE|IS|NULL|EXISTS|UNION|ALL|EXPLAIN|ANALYZE|PRIMARY|KEY|FOREIGN|REFERENCES|DEFAULT|CONSTRAINT|INDEX|UNIQUE|CHECK|CASCADE|INTERVAL|CURRENT_DATE|CURRENT_TIMESTAMP|TRUE|FALSE)\b/gi;
+  const functions = /\b(COUNT|SUM|AVG|MIN|MAX|COALESCE|CAST|CONCAT|NOW|YEAR|MONTH|DAY|UPPER|LOWER|TRIM|LENGTH|ROUND|ABS)\b/gi;
+  const strings = /'[^']*'/g;
+  const numbers = /\b(\d+)\b/g;
+  const params = /:(\w+)/g;
+
+  let html = sql
+    .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(strings, m => '<span class="str">'+m+'</span>')
+    .replace(keywords, m => '<span class="kw">'+m+'</span>')
+    .replace(functions, m => '<span class="fn">'+m+'</span>')
+    .replace(numbers, m => '<span class="num">'+m+'</span>')
+    .replace(params, m => '<span class="param">'+m+'</span>');
+
+  for (const t of Object.keys(state.schema)) {
+    html = html.replace(new RegExp('\\b('+t+')\\b','g'), '<span class="tbl">$1</span>');
+  }
+  return html;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   UI RENDERING
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function renderSchema() {
+  const container = document.getElementById('schema-content');
+  const schema = state.schema;
+  const tableNames = Object.keys(schema);
+
+  document.getElementById('schema-title').textContent = 'Schema — ' + (state.selectedDb || '?');
+
+  if (tableNames.length === 0) {
+    container.innerHTML = '<div class="schema-empty">Aucune table dans cette base de donnees.</div>';
+    return;
+  }
+
+  let html = '';
+  for (const [table, tableSchema] of Object.entries(schema)) {
+    const expanded = state.expandedTables.has(table);
+    const colCount = (tableSchema.columns || []).length;
+    const idxCount = (tableSchema.indexes || []).length;
+    html += '<div class="schema-section">'
+      + '<button class="schema-table-btn '+(expanded?'active':'')+'" onclick="toggleSchemaTable(\''+table+'\')">'
+      + '<span class="schema-table-icon">T</span>'
+      + '<div>'
+      + '<div class="schema-table-name">'+table+'</div>'
+      + '<div class="schema-table-cols">'+colCount+' columns &middot; '+idxCount+' indexes</div>'
+      + '</div>'
+      + '</button>';
+    if (expanded) {
+      html += '<div class="schema-columns">';
+      for (const c of (tableSchema.columns || [])) {
+        html += '<div class="schema-col">'
+          + '<span class="schema-col-name">'+c.name+'</span>'
+          + '<span class="schema-col-type">'+c.type+'</span>'
+          + (c.pk ? '<span class="schema-col-pk">PK</span>' : '')
+          + (c.nullable ? '<span class="schema-col-nullable">NULL</span>' : '')
+          + '</div>';
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+  }
+  container.innerHTML = html;
+}
+
+function toggleSchemaTable(name) {
+  if (state.expandedTables.has(name)) state.expandedTables.delete(name);
+  else state.expandedTables.add(name);
+  renderSchema();
+}
+
+function renderMetrics() {
+  const m = state.metrics;
+  const avg = m.totalQueries > 0 ? Math.round(m.totalLatency / m.totalQueries) : 0;
+  const accuracy = (m.correctFeedback+m.incorrectFeedback) > 0 ? Math.round((m.correctFeedback/(m.correctFeedback+m.incorrectFeedback))*100) : 0;
+  document.getElementById('metrics-grid').innerHTML =
+    '<div class="metric-card"><div class="metric-label">Requetes</div><div class="metric-value blue">'+m.totalQueries+'</div></div>'
+    + '<div class="metric-card"><div class="metric-label">Reussies</div><div class="metric-value green">'+m.successfulQueries+'</div></div>'
+    + '<div class="metric-card"><div class="metric-label">Latence Moy</div><div class="metric-value orange">'+avg+'&mu;s</div></div>'
+    + '<div class="metric-card"><div class="metric-label">Precision</div><div class="metric-value purple">'+accuracy+'%</div></div>'
+    + '<div class="metric-card"><div class="metric-label">Feedback +</div><div class="metric-value green">'+m.correctFeedback+'</div></div>'
+    + '<div class="metric-card"><div class="metric-label">Feedback -</div><div class="metric-value red">'+m.incorrectFeedback+'</div></div>';
+}
+
+function renderStrategies() {
+  const el = document.getElementById('strategy-list');
+  let html = '';
+  for (const [name, acc] of Object.entries(state.strategyAccuracy)) {
+    const w = state.strategyWeights[name];
+    const pct = Math.round(acc * 100);
+    const color = STRATEGY_COLORS[name] || '#6b7280';
+    html += '<div class="strategy-item">'
+      + '<div class="strategy-name">'+name+'</div>'
+      + '<div class="strategy-bar-bg"><div class="strategy-bar" style="width:'+pct+'%;background:'+color+'"></div></div>'
+      + '<div class="strategy-detail"><span>Accuracy: '+pct+'%</span><span>Weight: '+w.toFixed(2)+'</span></div>'
+      + '</div>';
+  }
+  el.innerHTML = html;
+}
+
+function renderPatterns() {
+  const el = document.getElementById('pattern-list');
+  if (state.patterns.length === 0) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">Aucun pattern detecte. Effectuez des requetes pour miner des patterns.</div>';
+    return;
+  }
+  el.innerHTML = state.patterns.slice(0,20).map(p =>
+    '<div class="pattern-item">'
+    + '<span class="pattern-type" style="color:'+(INTENT_COLORS[p.intent]||'#6b7280')+'">'+p.intent+'</span>'
+    + '<span class="pattern-freq">x'+p.freq+'</span>'
+    + '<span class="pattern-conf">'+(p.avgConf*100).toFixed(0)+'%</span>'
+    + '</div>'
+  ).join('');
+}
+
+function renderHistory() {
+  const el = document.getElementById('history-list');
+  if (state.history.length === 0) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:12px;text-align:center;padding:20px">Aucun historique.</div>';
+    return;
+  }
+  el.innerHTML = state.history.slice().reverse().map((h) =>
+    '<div class="history-item" onclick="replayQuery(\''+h.query.replace(/'/g,"\\'").replace(/"/g,'&quot;')+'\')">'
+    + '<span class="history-intent" style="background:'+(INTENT_COLORS[h.intent]||'#6b7280')+'22;color:'+(INTENT_COLORS[h.intent]||'#6b7280')+'">'+h.intent+'</span>'
+    + '<span class="history-query">'+escapeHtml(h.query)+'</span>'
+    + '<span class="history-time">'+h.latency+'&mu;s</span>'
+    + '</div>'
+  ).join('');
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   RESULTS TABLE RENDERING
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function renderResultsCard(container, result, execTime) {
+  /* Remove any previous results card in this msg-body */
+  const existing = container.querySelector('.results-card');
+  if (existing) existing.remove();
+
+  let html = '<div class="results-card">';
+
+  if (!result.success) {
+    html += '<div class="results-error">Erreur: '+(result.error || 'Erreur inconnue')+'</div>';
+    html += '</div>';
+    container.insertAdjacentHTML('beforeend', html);
+    return;
+  }
+
+  html += '<div class="results-header">'
+    + '<div class="results-header-left">'
+    + '<span class="results-title">Resultats</span>';
+
+  if (result.type === 'resultSet') {
+    html += '<span class="results-count">'+result.rowCount+' ligne'+(result.rowCount!==1?'s':'')+'</span>';
+  }
+  html += '<span class="results-time">'+execTime+'ms</span>'
+    + '</div>'
+    + '<div class="results-header-actions">';
+
+  if (result.type === 'resultSet') {
+    html += '<button onclick="copyResultsCSV(this)" title="Copier CSV">'
+      + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>'
+      + ' CSV</button>';
+  }
+  html += '</div></div>';
+
+  if (result.type === 'resultSet') {
+    html += '<div class="results-scroll"><table class="results-table"><thead><tr>';
+    for (const col of (result.columns || [])) {
+      html += '<th>'+escapeHtml(col.name)+'</th>';
+    }
+    html += '</tr></thead><tbody>';
+    for (const row of (result.rows || [])) {
+      html += '<tr>';
+      for (const col of (result.columns || [])) {
+        const val = row[col.name];
+        if (val === null || val === undefined) {
+          html += '<td class="null-val">NULL</td>';
+        } else if (typeof val === 'number' || (typeof val === 'string' && /^\d+(\.\d+)?$/.test(val))) {
+          html += '<td class="num-val">'+escapeHtml(String(val))+'</td>';
+        } else if (typeof val === 'boolean') {
+          html += '<td class="bool-val">'+val+'</td>';
+        } else {
+          html += '<td>'+escapeHtml(String(val))+'</td>';
+        }
+      }
+      html += '</tr>';
+    }
+    html += '</tbody></table></div>';
+  } else if (result.type === 'update') {
+    html += '<div class="results-update-msg">'
+      + '<span class="update-count">'+(result.updateCount||0)+'</span>'
+      + ' ligne'+(result.updateCount!==1?'s':'')+' affectee'+(result.updateCount!==1?'s':'')
+      + '</div>';
+  }
+
+  html += '</div>';
+  container.insertAdjacentHTML('beforeend', html);
+}
+
+function copyResultsCSV(btn) {
+  const card = btn.closest('.results-card');
+  const table = card.querySelector('.results-table');
+  if (!table) return;
+  const rows = table.querySelectorAll('tr');
+  let csv = '';
+  rows.forEach(function(row) {
+    const cells = row.querySelectorAll('th, td');
+    const vals = [];
+    cells.forEach(function(c) { vals.push('"'+c.textContent.replace(/"/g,'""')+'"'); });
+    csv += vals.join(',') + '\n';
+  });
+  navigator.clipboard.writeText(csv).then(function() { showToast('Resultats copies en CSV','success'); });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   CHAT MESSAGING
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function addMessage(role, content, extras) {
+  const container = document.getElementById('chat-messages');
+  const welcome = document.getElementById('welcome-screen');
+  if (welcome) welcome.remove();
+
+  const time = new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  const avatar = role === 'user' ? 'U' : 'AI';
+
+  let html = '<div class="msg '+role+'">'
+    + '<div class="msg-avatar">'+avatar+'</div>'
+    + '<div class="msg-body" data-msg-id="'+(extras?.msgId||'')+'">'
+    + '<div class="msg-text">'+content+'</div>'
+    + '<div class="msg-time">'+time+'</div>';
+
+  if (extras) {
+    if (extras.sql) {
+      const sqlId = extras.sqlId || ('sql-'+Date.now());
+      html += '<div class="sql-output" data-sql-id="'+sqlId+'">'
+        + '<div class="sql-output-header">'
+        + '<span class="sql-output-lang">SQL</span>'
+        + '<div class="sql-output-actions">'
+        + '<button onclick="copySQL(this)" title="Copier">'
+        + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>'
+        + '</button>'
+        + '<button class="exec-btn" onclick="executeSQL(this)" title="Executer le SQL">'
+        + '<span class="exec-icon">&#9654;</span> Executer'
+        + '</button>'
+        + '</div>'
+        + '</div>'
+        + '<div class="sql-code" contenteditable="true" spellcheck="false" data-raw-sql="'+escapeAttr(extras.sql)+'">'+highlightSQL(extras.sql)+'</div>'
+        + '</div>';
+    }
+
+    if (extras.meta) {
+      const m = extras.meta;
+      html += '<div class="meta-cards">'
+        + '<div class="meta-card intent"><span class="label">Intent</span><span class="value" style="color:'+(INTENT_COLORS[m.intent]||'')+'">'+m.intent+'</span></div>'
+        + '<div class="meta-card confidence"><span class="label">Confiance</span><span class="value">'+(m.confidence*100).toFixed(1)+'%</span></div>'
+        + '<div class="meta-card latency"><span class="label">Latence</span><span class="value">'+m.latency+'&mu;s</span></div>'
+        + '<div class="meta-card '+(m.valid?'valid':'invalid')+'"><span class="label">Valide</span><span class="value">'+(m.valid?'Oui':'Non')+'</span></div>'
+        + '</div>';
+    }
+
+    if (extras.votes && extras.votes.length) {
+      const maxScore = Math.max(...extras.votes.map(v=>v.weightedScore),0.01);
+      html += '<div class="vote-section"><div class="vote-title">Vote Ensemble (5 strategies)</div>';
+      for (const v of extras.votes) {
+        const pct = (v.weightedScore/maxScore*100).toFixed(1);
+        html += '<div class="vote-row">'
+          + '<span class="vote-strategy">'+v.strategy+'</span>'
+          + '<div class="vote-bar-bg"><div class="vote-bar" style="width:'+pct+'%;background:'+(STRATEGY_COLORS[v.strategy]||'#6b7280')+'"></div></div>'
+          + '<span class="vote-score">'+v.weightedScore.toFixed(3)+'</span>'
+          + '</div>';
+      }
+      html += '</div>';
+    }
+
+    if (extras.queryId !== undefined) {
+      html += '<div class="feedback-row">'
+        + '<button class="feedback-btn correct" onclick="submitFeedback('+extras.queryId+',true,this)">'
+        + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 00-3-3l-4 9v11h11.28a2 2 0 002-1.7l1.38-9a2 2 0 00-2-2.3H14z"/><path d="M7 22H4a2 2 0 01-2-2v-7a2 2 0 012-2h3"/></svg>'
+        + ' Correct'
+        + '</button>'
+        + '<button class="feedback-btn incorrect" onclick="submitFeedback('+extras.queryId+',false,this)">'
+        + '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 003 3l4-9V2H5.72a2 2 0 00-2 1.7l-1.38 9a2 2 0 002 2.3H10z"/><path d="M17 2h2.67A2.31 2.31 0 0122 4v7a2.31 2.31 0 01-2.33 2H17"/></svg>'
+        + ' Incorrect'
+        + '</button>'
+        + '</div>';
+    }
+  }
+
+  html += '</div></div>';
+  container.insertAdjacentHTML('beforeend', html);
+  container.scrollTop = container.scrollHeight;
+}
+
+function addTypingIndicator() {
+  const container = document.getElementById('chat-messages');
+  const id = 'typing-'+Date.now();
+  container.insertAdjacentHTML('beforeend',
+    '<div class="msg assistant" id="'+id+'">'
+    + '<div class="msg-avatar">AI</div>'
+    + '<div class="msg-body"><div class="msg-text"><div class="typing-indicator">'
+    + '<div class="typing-dot"></div><div class="typing-dot"></div><div class="typing-dot"></div>'
+    + '</div></div></div></div>');
+  container.scrollTop = container.scrollHeight;
+  return id;
+}
+
+function removeTypingIndicator(id) {
+  const el = document.getElementById(id);
+  if (el) el.remove();
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   QUERY SENDING
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function sendQuery() {
+  const input = document.getElementById('query-input');
+  const query = input.value.trim();
+  if (!query || state.isProcessing) return;
+  if (!state.selectedDb) {
+    showToast('Veuillez selectionner une base de donnees','error');
+    return;
+  }
+
+  state.isProcessing = true;
+  input.value = '';
+  autoResize(input);
+  updateCharCount();
+
+  /* Add user message */
+  addMessage('user', escapeHtml(query));
+
+  /* Show typing indicator */
+  const typingId = addTypingIndicator();
+
+  try {
+    /* Try server first */
+    const startTime = performance.now();
+    const data = await apiPost('/api/query', {query: query, database: state.selectedDb});
+    const latency = Math.round((performance.now() - startTime) * 100);
+    removeTypingIndicator(typingId);
+
+    const sql = data.sql || '';
+    const intent = data.intent || 'Unknown';
+    const confidence = data.confidence || 0;
+    const votes = data.votes || [];
+    const scores = data.scores || {};
+    const queryId = data.queryId;
+    const valid = sql.length > 5 && !sql.startsWith('--');
+
+    state.lastQueryId = queryId;
+    state.lastSql = sql;
+
+    /* Record in state */
+    state.history.push({query, intent, sql, latency, confidence, votes, time:Date.now(), db:state.selectedDb});
+    state.metrics.totalQueries++;
+    state.metrics.successfulQueries++;
+    state.metrics.totalLatency += latency;
+
+    /* Pattern mining */
+    const existing = state.patterns.find(p => p.intent === intent);
+    if (existing) { existing.freq++; existing.avgConf = (existing.avgConf + confidence)/2; }
+    else state.patterns.push({intent, freq:1, avgConf:confidence});
+    state.patterns.sort((a,b)=>b.freq-a.freq);
+
+    /* Add assistant response */
+    addMessage('assistant', 'Voici la requete SQL generee pour votre demande :', {
+      sql,
+      meta: {intent, confidence, latency, valid},
+      votes,
+      queryId,
+      sqlId: 'sql-'+Date.now()
+    });
+
+    document.getElementById('status-latency').textContent = 'Latence: '+latency+'\u00B5s';
+
+  } catch (e) {
+    /* Fallback to simulation */
+    removeTypingIndicator(typingId);
+
+    const start = performance.now();
+    const result = resolveIntent(query);
+    const sql = generateSQL(query, result.intent);
+    const latency = Math.round((performance.now() - start) * 100);
+    const valid = sql.length > 5 && !sql.startsWith('--');
+    const queryId = state.history.length;
+
+    state.lastQueryId = queryId;
+    state.lastSql = sql;
+
+    state.history.push({query, intent:result.intent, sql, latency, confidence:result.confidence, votes:result.votes, time:Date.now(), db:state.selectedDb});
+    state.metrics.totalQueries++;
+    state.metrics.successfulQueries++;
+    state.metrics.totalLatency += latency;
+
+    const existing = state.patterns.find(p => p.intent === result.intent);
+    if (existing) { existing.freq++; existing.avgConf = (existing.avgConf + result.confidence)/2; }
+    else state.patterns.push({intent:result.intent, freq:1, avgConf:result.confidence});
+    state.patterns.sort((a,b)=>b.freq-a.freq);
+
+    addMessage('assistant', 'Voici la requete SQL generee (mode simulation) :', {
+      sql,
+      meta: {intent:result.intent, confidence:result.confidence, latency, valid},
+      votes: result.votes,
+      queryId,
+      sqlId: 'sql-'+Date.now()
+    });
+
+    document.getElementById('status-latency').textContent = 'Latence: '+latency+'\u00B5s';
+    showToast('Serveur indisponible - mode simulation','info');
+  }
+
+  /* Update panels */
+  renderMetrics();
+  renderStrategies();
+  renderPatterns();
+  renderHistory();
+  updateStatusBar();
+
+  state.isProcessing = false;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   SQL EXECUTION
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function executeSQL(btn) {
+  const sqlOutput = btn.closest('.sql-output');
+  const sqlCodeEl = sqlOutput.querySelector('.sql-code');
+  /* Get the raw SQL from the data attribute (original), or from contenteditable text if edited */
+  let sql = sqlCodeEl.getAttribute('data-raw-sql');
+  /* If user edited the contenteditable, get the text content */
+  const currentText = sqlCodeEl.textContent.trim();
+  if (currentText && currentText !== sql) {
+    sql = currentText;
+  }
+
+  if (!sql || sql.startsWith('--')) {
+    showToast('SQL invalide ou vide','error');
+    return;
+  }
+
+  const db = state.selectedDb;
+  if (!db) {
+    showToast('Aucune base de donnees selectionnee','error');
+    return;
+  }
+
+  /* Disable button while executing */
+  btn.disabled = true;
+  const origHtml = btn.innerHTML;
+  btn.innerHTML = '<span class="exec-icon" style="animation:pulse .8s infinite">&#9654;</span> Execution...';
+
+  const msgBody = btn.closest('.msg-body');
+  const execStart = performance.now();
+
+  try {
+    /* Try server first */
+    const data = await apiPost('/api/execute', {sql: sql, database: db});
+    const execTime = Math.round(performance.now() - execStart);
+
+    renderResultsCard(msgBody, data, execTime);
+    showToast('Requete executee avec succes','success');
+
+  } catch (e) {
+    /* Fallback to simulation */
+    const execTime = Math.round(performance.now() - execStart);
+    console.warn('Execute API unavailable, simulating:', e.message);
+    const result = simulateExecute(sql);
+    renderResultsCard(msgBody, result, execTime);
+    showToast('Execution simulee (serveur indisponible)','info');
+  }
+
+  /* Re-enable button */
+  btn.disabled = false;
+  btn.innerHTML = origHtml;
+
+  /* Scroll to results */
+  const container = document.getElementById('chat-messages');
+  container.scrollTop = container.scrollHeight;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   FEEDBACK
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function submitFeedback(queryId, isCorrect, btn) {
+  const row = btn.closest('.feedback-row');
+  row.querySelectorAll('.feedback-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+
+  if (isCorrect) state.metrics.correctFeedback++;
+  else state.metrics.incorrectFeedback++;
+
+  /* Adapt strategy weights */
+  const h = state.history[queryId];
+  if (h && h.votes) {
+    for (const v of h.votes) {
+      const current = state.strategyWeights[v.strategy];
+      if (isCorrect) state.strategyWeights[v.strategy] = Math.min(2.0, current * 1.05);
+      else state.strategyWeights[v.strategy] = Math.max(0.3, current * 0.95);
+
+      const acc = state.strategyAccuracy[v.strategy] || 0.5;
+      state.strategyAccuracy[v.strategy] = acc * 0.9 + (isCorrect ? 1 : 0) * 0.1;
+    }
+  }
+
+  /* Try to send feedback to server */
+  if (state.serverAvailable && queryId !== undefined) {
+    apiPost('/api/feedback', {queryId: queryId, correct: isCorrect}).catch(function() {});
+  }
+
+  renderMetrics();
+  renderStrategies();
+  showToast(isCorrect ? 'Feedback positif enregistre' : 'Feedback negatif enregistre - poids ajustes', isCorrect ? 'success' : 'info');
+}
+
+function replayQuery(query) {
+  document.getElementById('query-input').value = query;
+  sendQuery();
+}
+
+function copySQL(btn) {
+  const sqlOutput = btn.closest('.sql-output');
+  const sqlCodeEl = sqlOutput.querySelector('.sql-code');
+  const text = sqlCodeEl.textContent;
+  navigator.clipboard.writeText(text).then(function() { showToast('SQL copie dans le presse-papiers','success'); });
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   METRICS / STRATEGIES / PATTERNS FROM SERVER
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function loadServerMetrics() {
+  try {
+    const data = await apiGet('/api/metrics');
+    if (data) {
+      state.metrics.totalQueries = data.totalQueries || state.metrics.totalQueries;
+      state.metrics.successfulQueries = data.successfulQueries || state.metrics.successfulQueries;
+      state.metrics.avgLatency = data.avgLatency || state.metrics.avgLatency;
+      state.metrics.totalLatency = data.totalLatency || state.metrics.totalLatency;
+      state.metrics.correctFeedback = data.correctFeedback || state.metrics.correctFeedback;
+      state.metrics.incorrectFeedback = data.incorrectFeedback || state.metrics.incorrectFeedback;
+      renderMetrics();
+    }
+  } catch (e) { /* fallback */ }
+}
+
+async function loadServerStrategies() {
+  try {
+    const data = await apiGet('/api/strategies');
+    if (data && data.strategies) {
+      for (const s of data.strategies) {
+        if (s.name) {
+          if (s.accuracy !== undefined) state.strategyAccuracy[s.name] = s.accuracy;
+          if (s.weight !== undefined) state.strategyWeights[s.name] = s.weight;
+        }
+      }
+      renderStrategies();
+    }
+  } catch (e) { /* fallback */ }
+}
+
+async function loadServerPatterns() {
+  try {
+    const data = await apiGet('/api/patterns');
+    if (data && data.patterns) {
+      state.patterns = data.patterns;
+      renderPatterns();
+    }
+  } catch (e) { /* fallback */ }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   UI CONTROLS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('collapsed');
+  document.getElementById('btn-sidebar').classList.toggle('active');
+}
+
+function togglePanel() {
+  document.getElementById('panel-right').classList.toggle('collapsed');
+  document.getElementById('btn-panel').classList.toggle('active');
+}
+
+function toggleTheme() {
+  const html = document.documentElement;
+  const current = html.getAttribute('data-theme');
+  html.setAttribute('data-theme', current === 'dark' ? 'light' : 'dark');
+  showToast(current === 'dark' ? 'Theme clair active' : 'Theme sombre active', 'info');
+}
+
+function switchTab(btn) {
+  const tab = btn.dataset.tab;
+  document.querySelectorAll('.panel-tab').forEach(function(t) { t.classList.remove('active'); });
+  document.querySelectorAll('.tab-content').forEach(function(t) { t.style.display = 'none'; });
+  btn.classList.add('active');
+  document.getElementById('tab-' + tab).style.display = 'block';
+  state.activeTab = tab;
+}
+
+function clearChat() {
+  const container = document.getElementById('chat-messages');
+  container.innerHTML = '<div class="welcome" id="welcome-screen">'
+    + '<div class="welcome-icon">SQL</div>'
+    + '<h2>Enterprise SQL Assistant V3</h2>'
+    + '<p>Transformez vos requetes en langage naturel en SQL optimise.</p>'
+    + '</div>';
+  state.history = [];
+  state.patterns = [];
+  renderMetrics();
+  renderPatterns();
+  renderHistory();
+  showToast('Conversation effacee','info');
+}
+
+function handleInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendQuery();
+  }
+}
+
+function autoResize(el) {
+  el.style.height = 'auto';
+  el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  updateCharCount();
+}
+
+function updateCharCount() {
+  const input = document.getElementById('query-input');
+  document.getElementById('char-count').textContent = input.value.length + ' / 2000';
+}
+
+function escapeHtml(str) {
+  const d = document.createElement('div');
+  d.textContent = str;
+  return d.innerHTML;
+}
+
+function escapeAttr(str) {
+  return str.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/'/g,'&#39;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function showToast(msg, type) {
+  type = type || 'info';
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = 'toast ' + type;
+  toast.textContent = msg;
+  container.appendChild(toast);
+  setTimeout(function() { toast.style.opacity = '0'; toast.style.transition = 'opacity .3s'; setTimeout(function() { toast.remove(); }, 300); }, 3000);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   COMMAND PALETTE
+   ═══════════════════════════════════════════════════════════════════════ */
+
+const COMMANDS = [
+  {icon:'T',label:'Afficher le schema',shortcut:'Ctrl+S',action:function(){toggleSidebar();hideCmdPalette()}},
+  {icon:'M',label:'Afficher les metriques',shortcut:'Ctrl+M',action:function(){togglePanel();switchTab(document.querySelector('[data-tab="metrics"]'));hideCmdPalette()}},
+  {icon:'S',label:'Afficher les strategies',shortcut:'',action:function(){togglePanel();switchTab(document.querySelector('[data-tab="strategies"]'));hideCmdPalette()}},
+  {icon:'P',label:'Afficher les patterns',shortcut:'',action:function(){togglePanel();switchTab(document.querySelector('[data-tab="patterns"]'));hideCmdPalette()}},
+  {icon:'H',label:'Afficher l\'historique',shortcut:'',action:function(){togglePanel();switchTab(document.querySelector('[data-tab="history"]'));hideCmdPalette()}},
+  {icon:'D',label:'Changer le theme',shortcut:'Ctrl+D',action:function(){toggleTheme();hideCmdPalette()}},
+  {icon:'C',label:'Effacer la conversation',shortcut:'',action:function(){clearChat();hideCmdPalette()}},
+  {icon:'Q',label:'Requete: Tous les utilisateurs actifs',shortcut:'',action:function(){document.getElementById('query-input').value='montre tous les utilisateurs actifs';sendQuery();hideCmdPalette()}},
+  {icon:'Q',label:'Requete: Nombre de commandes par statut',shortcut:'',action:function(){document.getElementById('query-input').value='combien de commandes par statut';sendQuery();hideCmdPalette()}},
+  {icon:'Q',label:'Requete: Joindre utilisateurs et commandes',shortcut:'',action:function(){document.getElementById('query-input').value='joindre les utilisateurs avec leurs commandes';sendQuery();hideCmdPalette()}},
+  {icon:'Q',label:'Requete: Prix total des commandes',shortcut:'',action:function(){document.getElementById('query-input').value='somme totale des prix de commandes';sendQuery();hideCmdPalette()}},
+  {icon:'Q',label:'Requete: Ajouter un utilisateur',shortcut:'',action:function(){document.getElementById('query-input').value='ajouter un nouvel utilisateur';sendQuery();hideCmdPalette()}},
+  {icon:'Q',label:'Requete: Schema de la table orders',shortcut:'',action:function(){document.getElementById('query-input').value='decris la table orders';sendQuery();hideCmdPalette()}},
+  {icon:'Q',label:'Requete: Supprimer les utilisateurs inactifs',shortcut:'',action:function(){document.getElementById('query-input').value='supprimer les utilisateurs inactifs';sendQuery();hideCmdPalette()}},
+  {icon:'Q',label:'Requete: Produits les plus chers',shortcut:'',action:function(){document.getElementById('query-input').value='produits avec le prix le plus eleve';sendQuery();hideCmdPalette()}},
+  {icon:'B',label:'Changer de base de donnees',shortcut:'',action:function(){document.getElementById('db-select').focus();hideCmdPalette()}},
+];
+
+function showCmdPalette() {
+  document.getElementById('cmd-overlay').classList.add('show');
+  const input = document.getElementById('cmd-input');
+  input.value = '';
+  input.focus();
+  filterCommands('');
+}
+
+function hideCmdPalette(e) {
+  if (e && e.target !== document.getElementById('cmd-overlay')) return;
+  document.getElementById('cmd-overlay').classList.remove('show');
+}
+
+function filterCommands(val) {
+  const el = document.getElementById('cmd-results');
+  const v = val.toLowerCase();
+  const filtered = COMMANDS.filter(function(c){return c.label.toLowerCase().includes(v)});
+  el.innerHTML = filtered.map(function(c,i){
+    const idx = COMMANDS.indexOf(c);
+    return '<div class="cmd-item '+(i===0?'selected':'')+'" onclick="COMMANDS['+idx+'].action()" data-idx="'+i+'">'
+      + '<div class="cmd-item-icon">'+c.icon+'</div>'
+      + '<div class="cmd-item-text">'+c.label+'</div>'
+      + (c.shortcut ? '<div class="cmd-item-shortcut">'+c.shortcut+'</div>' : '')
+      + '</div>';
+  }).join('');
+}
+
+function handleCmdKey(e) {
+  if (e.key === 'Escape') { hideCmdPalette(); return; }
+  if (e.key === 'Enter') {
+    const sel = document.querySelector('.cmd-item.selected');
+    if (sel) sel.click();
+    return;
+  }
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault();
+    const items = document.querySelectorAll('.cmd-item');
+    var idx = Array.from(items).findIndex(function(i){return i.classList.contains('selected')});
+    items.forEach(function(i){i.classList.remove('selected')});
+    if (e.key === 'ArrowDown') idx = Math.min(idx + 1, items.length - 1);
+    else idx = Math.max(idx - 1, 0);
+    if (items[idx]) { items[idx].classList.add('selected'); items[idx].scrollIntoView({block:'nearest'}); }
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   KEYBOARD SHORTCUTS
+   ═══════════════════════════════════════════════════════════════════════ */
+
+document.addEventListener('keydown', function(e) {
+  if (e.ctrlKey && e.key === 'k') { e.preventDefault(); showCmdPalette(); }
+  if (e.ctrlKey && e.key === 'd') { e.preventDefault(); toggleTheme(); }
+  if (e.ctrlKey && e.key === 's') { e.preventDefault(); toggleSidebar(); }
+  if (e.ctrlKey && e.key === 'm') { e.preventDefault(); togglePanel(); }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════
+   INITIALIZATION
+   ═══════════════════════════════════════════════════════════════════════ */
+
+async function init() {
+  /* Render initial UI state */
+  renderMetrics();
+  renderStrategies();
+  renderPatterns();
+  renderHistory();
+
+  /* Load databases and schema from server */
+  await loadDatabases();
+
+  /* Load server metrics, strategies, patterns in background */
+  loadServerMetrics();
+  loadServerStrategies();
+  loadServerPatterns();
+
+  /* Periodic refresh of server data */
+  setInterval(function() {
+    if (state.serverAvailable) {
+      loadServerMetrics();
+      loadServerStrategies();
+      loadServerPatterns();
+      updateStatusBar();
+    }
+  }, 10000);
+}
+
+init();
+</script>
+</body>
+</html>

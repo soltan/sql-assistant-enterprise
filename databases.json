@@ -1,0 +1,29 @@
+[
+  {
+    "name": "E-Commerce",
+    "description": "Base de donnees e-commerce avec utilisateurs, commandes et produits",
+    "driver": "org.h2.Driver",
+    "url": "jdbc:h2:mem:ecommerce;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
+    "user": "sa",
+    "password": "",
+    "sampleData": false
+  },
+  {
+    "name": "Analytics",
+    "description": "Base de donnees analytique avec evenements, sessions et metriques",
+    "driver": "org.h2.Driver",
+    "url": "jdbc:h2:mem:analytics;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
+    "user": "sa",
+    "password": "",
+    "sampleData": false
+  },
+  {
+    "name": "RH",
+    "description": "Base de donnees ressources humaines avec employes, departements et salaires",
+    "driver": "org.h2.Driver",
+    "url": "jdbc:h2:mem:rh;DB_CLOSE_DELAY=-1;MODE=PostgreSQL",
+    "user": "sa",
+    "password": "",
+    "sampleData": false
+  }
+]
