@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Enterprise SQL Assistant V4 — Multi-Database + LLM</title>
+<title>Enterprise SQL Assistant V5 — Templates + Commentaires</title>
 <style>
 /* ═══════════════════════════════════════════════════════════════
    CSS RESET & VARIABLES
@@ -16,7 +16,7 @@
   --text-primary:#e2e8f0;--text-secondary:#94a3b8;--text-muted:#64748b;
   --accent:#3b82f6;--accent-hover:#2563eb;--accent-glow:rgba(59,130,246,.25);
   --success:#10b981;--warning:#f59e0b;--danger:#ef4444;--info:#06b6d4;
-  --purple:#8b5cf6;--pink:#ec4899;
+  --purple:#8b5cf6;--pink:#ec4899;--teal:#14b8a6;
   --radius:8px;--radius-lg:12px;--radius-xl:16px;
   --shadow:0 4px 24px rgba(0,0,0,.4);
   --font-mono:'JetBrains Mono','Fira Code','Cascadia Code','Consolas',monospace;
@@ -66,32 +66,10 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
 .db-conn-dot.on{background:var(--success)}
 .db-conn-dot.off{background:var(--danger)}
 
-/* LLM Badge */
-.llm-badge{display:flex;align-items:center;gap:6px;margin-left:12px;padding-left:12px;border-left:1px solid var(--border)}
-.llm-badge-dot{width:8px;height:8px;border-radius:50%;background:var(--text-muted);transition:background .3s}
-.llm-badge-dot.available{background:var(--success);box-shadow:0 0 6px rgba(16,185,129,.5)}
-.llm-badge-dot.loading{background:var(--warning);animation:pulse 1s infinite}
-.llm-badge-label{font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:.5px}
-.llm-badge-label.available{color:var(--success)}
-.llm-badge-label.loading{color:var(--warning)}
-
-/* Mode Selector */
-.mode-selector{display:flex;gap:2px;background:var(--bg-tertiary);border-radius:6px;padding:2px;border:1px solid var(--border)}
-.mode-btn{padding:4px 10px;border-radius:4px;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:.4px;color:var(--text-muted);transition:var(--transition);cursor:pointer}
-.mode-btn:hover{color:var(--text-secondary)}
-.mode-btn.active{background:var(--accent);color:#fff}
-.mode-btn.active.llm{background:var(--purple)}
-.mode-btn.active.hybrid{background:linear-gradient(135deg,var(--accent),var(--purple))}
-
-/* Explain Button */
-.explain-btn{background:var(--purple)!important;color:#fff!important;font-weight:600;padding:0 10px!important;font-size:11px!important;border-radius:4px!important;display:flex!important;align-items:center;gap:3px}
-.explain-btn:hover{background:#7c3aed!important}
-.explain-btn:disabled{opacity:.4;cursor:not-allowed}
-
-/* LLM Explanation Card */
-.llm-explanation{background:rgba(139,92,246,.08);border:1px solid rgba(139,92,246,.2);border-radius:var(--radius);padding:10px 12px;margin-top:8px;font-size:12px;line-height:1.6;color:var(--text-secondary)}
-.llm-explanation-header{display:flex;align-items:center;gap:6px;margin-bottom:6px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--purple);font-weight:700}
-.llm-explanation-text{color:var(--text-primary)}
+/* Templates Badge */
+.templates-badge{display:flex;align-items:center;gap:6px;margin-left:12px;padding-left:12px;border-left:1px solid var(--border)}
+.templates-badge-dot{width:8px;height:8px;border-radius:50%;background:var(--teal);box-shadow:0 0 6px rgba(20,184,166,.5)}
+.templates-badge-label{font-size:10px;font-weight:600;color:var(--teal);text-transform:uppercase;letter-spacing:.5px}
 
 .header-right{display:flex;align-items:center;gap:8px}
 .header-btn{width:34px;height:34px;border-radius:var(--radius);display:flex;align-items:center;justify-content:center;color:var(--text-secondary);transition:var(--transition)}
@@ -239,14 +217,28 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
 .schema-table-icon{width:24px;height:24px;border-radius:6px;background:var(--bg-tertiary);display:flex;align-items:center;justify-content:center;font-size:11px;color:var(--purple)}
 .schema-table-name{font-weight:600;font-size:12px}
 .schema-table-cols{font-size:10px;color:var(--text-muted)}
+.schema-table-comment{font-size:10px;color:var(--text-muted);font-style:italic;margin-top:2px}
 .schema-columns{padding:4px 0 4px 36px}
-.schema-col{display:flex;align-items:center;gap:8px;padding:4px 12px;border-radius:4px;font-size:11px;transition:var(--transition)}
+.schema-col{display:flex;flex-direction:column;gap:0;padding:4px 12px;border-radius:4px;font-size:11px;transition:var(--transition)}
 .schema-col:hover{background:var(--bg-hover)}
+.schema-col-main{display:flex;align-items:center;gap:8px}
 .schema-col-name{font-family:var(--font-mono);color:var(--text-primary);font-weight:500}
 .schema-col-type{color:var(--text-muted);font-size:10px}
 .schema-col-pk{font-size:9px;padding:1px 4px;border-radius:3px;background:var(--warning);color:#000;font-weight:700}
 .schema-col-nullable{font-size:9px;color:var(--text-muted)}
+.schema-col-comment{font-size:9px;color:var(--text-muted);font-style:italic;margin-top:1px;padding-left:0}
 .schema-empty{color:var(--text-muted);font-size:12px;text-align:center;padding:24px 12px}
+
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR — TEMPLATES RAPIDES
+   ═══════════════════════════════════════════════════════════════ */
+.templates-section{border-top:1px solid var(--border);margin-top:8px;padding-top:8px}
+.templates-section-header{padding:4px 12px 6px;font-size:10px;text-transform:uppercase;letter-spacing:.8px;color:var(--teal);font-weight:600}
+.template-item{display:flex;align-items:center;gap:8px;padding:6px 10px;border-radius:6px;font-size:11px;background:var(--bg-tertiary);border:1px solid var(--border);cursor:pointer;transition:var(--transition);margin-bottom:4px}
+.template-item:hover{border-color:var(--teal);background:rgba(20,184,166,.08);transform:translateX(2px)}
+.template-item-icon{font-size:12px;color:var(--teal)}
+.template-item-name{flex:1;font-weight:500;color:var(--text-primary)}
+.template-item-desc{font-size:9px;color:var(--text-muted);font-style:italic}
 
 /* ═══════════════════════════════════════════════════════════════
    RIGHT PANEL — METRICS & DETAILS
@@ -353,7 +345,7 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
    RESPONSIVE
    ═══════════════════════════════════════════════════════════════ */
 @media(max-width:1100px){.sidebar{width:0;border:none;overflow:hidden}.panel-right{width:0;border:none;overflow:hidden}}
-@media(max-width:768px){.header{padding:0 12px}.chat-messages{padding:12px}.input-area{padding:8px 12px}.welcome-features{grid-template-columns:1fr 1fr}.db-info{display:none}.db-selector select{min-width:120px}.llm-badge{display:none}.mode-selector{display:none}}
+@media(max-width:768px){.header{padding:0 12px}.chat-messages{padding:12px}.input-area{padding:8px 12px}.welcome-features{grid-template-columns:1fr 1fr}.db-info{display:none}.db-selector select{min-width:120px}.templates-badge{display:none}}
 </style>
 </head>
 <body>
@@ -364,7 +356,7 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
       <div class="logo">
         <div class="logo-icon">SQL</div>
         <span class="logo-text">Enterprise SQL Assistant</span>
-        <span class="logo-version">V4</span>
+        <span class="logo-version">V5</span>
       </div>
       <!-- Database Selector -->
       <div class="db-selector-wrap">
@@ -378,10 +370,10 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
           <div class="db-meta" id="db-meta"><span class="db-conn-dot on" id="db-conn-dot"></span><span id="db-table-count">0 tables</span></div>
         </div>
       </div>
-      <!-- LLM Status Badge -->
-      <div class="llm-badge" id="llm-badge" title="LLM Status">
-        <span class="llm-badge-dot" id="llm-badge-dot"></span>
-        <span class="llm-badge-label" id="llm-badge-label">LLM</span>
+      <!-- Templates Badge -->
+      <div class="templates-badge" id="templates-badge" title="Templates SQL">
+        <span class="templates-badge-dot"></span>
+        <span class="templates-badge-label">6 Templates</span>
       </div>
     </div>
     <div class="header-right">
@@ -412,6 +404,11 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
       <div class="sidebar-content" id="schema-content">
         <div class="schema-empty">Chargement du schema...</div>
       </div>
+      <!-- Templates Rapides -->
+      <div class="templates-section" id="templates-section">
+        <div class="templates-section-header">Templates Rapides</div>
+        <div id="templates-list" style="padding:0 8px"></div>
+      </div>
     </aside>
 
     <!-- ══════ CENTER — CHAT ══════ -->
@@ -421,15 +418,10 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
           <span class="dot" id="chat-dot"></span>
           <div>
             <div class="chat-header-title">Jakarta Agentic AI Pipeline</div>
-            <div class="chat-header-subtitle">Perceive &rarr; Reason &rarr; Act &rarr; Reflect &rarr; LLM Refine</div>
+            <div class="chat-header-subtitle">Perceive &rarr; Reason &rarr; Act &rarr; Reflect &rarr; Templates</div>
           </div>
         </div>
         <div class="chat-actions">
-          <div class="mode-selector" id="mode-selector">
-            <button class="mode-btn active" data-mode="ensemble" onclick="setMode('ensemble',this)" title="Ensemble Resolver only">Ensemble</button>
-            <button class="mode-btn llm" data-mode="llm" onclick="setMode('llm',this)" title="LLM only">LLM</button>
-            <button class="mode-btn hybrid" data-mode="hybrid" onclick="setMode('hybrid',this)" title="Ensemble + LLM hybrid">Hybrid</button>
-          </div>
           <button class="header-btn" title="Effacer la conversation" onclick="clearChat()">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>
           </button>
@@ -438,8 +430,8 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
       <div class="chat-messages" id="chat-messages">
         <div class="welcome" id="welcome-screen">
           <div class="welcome-icon">SQL</div>
-          <h2>Enterprise SQL Assistant V4</h2>
-          <p>Transformez vos requetes en langage naturel en SQL optimise. Multi-base de donnees, execution directe, resultats en temps reel. Ensemble Resolver + LLM Qwen35 &mdash; Pure Java 21 + Jakarta AI.</p>
+          <h2>Enterprise SQL Assistant V5</h2>
+          <p>Transformez vos requetes en langage naturel en SQL optimise. Multi-base de donnees, execution directe, resultats en temps reel. Templates SQL + Commentaires de schema &mdash; Pure Java 21 + Jakarta AI.</p>
           <div class="welcome-features">
             <div class="welcome-feature">
               <div class="welcome-feature-icon">&#9889;</div>
@@ -448,8 +440,8 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
             </div>
             <div class="welcome-feature">
               <div class="welcome-feature-icon">&#127919;</div>
-              <div class="welcome-feature-label">5 Strategies</div>
-              <div class="welcome-feature-desc">Ensemble Resolver par vote</div>
+              <div class="welcome-feature-label">6 Strategies</div>
+              <div class="welcome-feature-desc">Ensemble Resolver + Templates</div>
             </div>
             <div class="welcome-feature">
               <div class="welcome-feature-icon">&#128451;</div>
@@ -462,9 +454,9 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
               <div class="welcome-feature-desc">SQL editable et executable</div>
             </div>
             <div class="welcome-feature">
-              <div class="welcome-feature-icon">&#129302;</div>
-              <div class="welcome-feature-label">LLM Qwen35</div>
-              <div class="welcome-feature-desc">Refine SQL + Explain</div>
+              <div class="welcome-feature-icon">&#128196;</div>
+              <div class="welcome-feature-label">Templates SQL</div>
+              <div class="welcome-feature-desc">Modeles + Commentaires</div>
             </div>
           </div>
         </div>
@@ -512,12 +504,12 @@ input,textarea,select{font-family:inherit;font-size:inherit;color:inherit;backgr
   <div class="status-bar">
     <div class="status-left">
       <span style="display:flex;align-items:center;gap:4px"><span class="status-dot" id="status-dot"></span> <span id="status-mode">Pret</span></span>
-      <span>Ensemble: 5 strategies</span>
+      <span>Ensemble: 6 strategies</span>
       <span>BD: <span class="status-db" id="status-db">--</span></span>
     </div>
     <div class="status-right">
       <span id="status-latency">Latence: --</span>
-      <span id="status-llm">LLM: --</span>
+      <span>Templates SQL actifs</span>
       <span>Java 21 + Jakarta AI</span>
     </div>
   </div>
@@ -548,82 +540,89 @@ const INTENT_COLORS = {
 
 const STRATEGY_COLORS = {
   intent_graph:'#3b82f6',lsh_multi_probe:'#8b5cf6',syntactic_parser:'#10b981',
-  thesaurus_hash:'#f59e0b',regex_rules:'#ef4444'
+  thesaurus_hash:'#f59e0b',regex_rules:'#ef4444',template_match:'#14b8a6'
 };
 
 /* Default fallback schema per-database */
 const FALLBACK_SCHEMAS = {
   ecommerce: {
     users: {
+      comment: 'Table des utilisateurs du systeme',
       columns: [
-        {name:'id',type:'BIGINT',pk:true,nullable:false},
-        {name:'username',type:'VARCHAR(255)',pk:false,nullable:false},
-        {name:'email',type:'VARCHAR(512)',pk:false,nullable:false},
-        {name:'created_at',type:'TIMESTAMP',pk:false,nullable:true},
-        {name:'active',type:'BOOLEAN',pk:false,nullable:true}
+        {name:'id',type:'BIGINT',pk:true,nullable:false,comment:'Identifiant unique'},
+        {name:'username',type:'VARCHAR(255)',pk:false,nullable:false,comment:'Nom d\'utilisateur'},
+        {name:'email',type:'VARCHAR(512)',pk:false,nullable:false,comment:'Adresse email'},
+        {name:'created_at',type:'TIMESTAMP',pk:false,nullable:true,comment:'Date de creation'},
+        {name:'active',type:'BOOLEAN',pk:false,nullable:true,comment:'Compte actif'}
       ], indexes:['idx_users_username','idx_users_email']
     },
     orders: {
+      comment: 'Commandes des utilisateurs',
       columns: [
-        {name:'id',type:'BIGINT',pk:true,nullable:false},
-        {name:'user_id',type:'BIGINT',pk:false,nullable:false},
-        {name:'product_id',type:'BIGINT',pk:false,nullable:false},
-        {name:'quantity',type:'INTEGER',pk:false,nullable:false},
-        {name:'total_price',type:'DECIMAL(10,2)',pk:false,nullable:false},
-        {name:'order_date',type:'TIMESTAMP',pk:false,nullable:false},
-        {name:'status',type:'VARCHAR(50)',pk:false,nullable:false}
+        {name:'id',type:'BIGINT',pk:true,nullable:false,comment:'Identifiant de commande'},
+        {name:'user_id',type:'BIGINT',pk:false,nullable:false,comment:'Reference utilisateur'},
+        {name:'product_id',type:'BIGINT',pk:false,nullable:false,comment:'Reference produit'},
+        {name:'quantity',type:'INTEGER',pk:false,nullable:false,comment:'Quantite commandee'},
+        {name:'total_price',type:'DECIMAL(10,2)',pk:false,nullable:false,comment:'Prix total'},
+        {name:'order_date',type:'TIMESTAMP',pk:false,nullable:false,comment:'Date de commande'},
+        {name:'status',type:'VARCHAR(50)',pk:false,nullable:false,comment:'Statut de la commande'}
       ], indexes:['idx_orders_user_id','idx_orders_status']
     },
     products: {
+      comment: 'Catalogue des produits',
       columns: [
-        {name:'id',type:'BIGINT',pk:true,nullable:false},
-        {name:'name',type:'VARCHAR(512)',pk:false,nullable:false},
-        {name:'description',type:'TEXT',pk:false,nullable:true},
-        {name:'price',type:'DECIMAL(10,2)',pk:false,nullable:false},
-        {name:'category',type:'VARCHAR(100)',pk:false,nullable:true},
-        {name:'stock',type:'INTEGER',pk:false,nullable:false}
+        {name:'id',type:'BIGINT',pk:true,nullable:false,comment:'Identifiant produit'},
+        {name:'name',type:'VARCHAR(512)',pk:false,nullable:false,comment:'Nom du produit'},
+        {name:'description',type:'TEXT',pk:false,nullable:true,comment:'Description du produit'},
+        {name:'price',type:'DECIMAL(10,2)',pk:false,nullable:false,comment:'Prix unitaire'},
+        {name:'category',type:'VARCHAR(100)',pk:false,nullable:true,comment:'Categorie du produit'},
+        {name:'stock',type:'INTEGER',pk:false,nullable:false,comment:'Stock disponible'}
       ], indexes:['idx_products_category']
     }
   },
   analytics: {
     events: {
+      comment: 'Evenements de tracking analytique',
       columns: [
-        {name:'id',type:'BIGINT',pk:true,nullable:false},
-        {name:'event_type',type:'VARCHAR(100)',pk:false,nullable:false},
-        {name:'user_id',type:'BIGINT',pk:false,nullable:true},
-        {name:'session_id',type:'VARCHAR(255)',pk:false,nullable:false},
-        {name:'properties',type:'JSON',pk:false,nullable:true},
-        {name:'timestamp',type:'TIMESTAMP',pk:false,nullable:false}
+        {name:'id',type:'BIGINT',pk:true,nullable:false,comment:'Identifiant evenement'},
+        {name:'event_type',type:'VARCHAR(100)',pk:false,nullable:false,comment:'Type d\'evenement'},
+        {name:'user_id',type:'BIGINT',pk:false,nullable:true,comment:'Utilisateur associe'},
+        {name:'session_id',type:'VARCHAR(255)',pk:false,nullable:false,comment:'Session navigateur'},
+        {name:'properties',type:'JSON',pk:false,nullable:true,comment:'Proprietes evenement'},
+        {name:'timestamp',type:'TIMESTAMP',pk:false,nullable:false,comment:'Horodatage'}
       ], indexes:['idx_events_type','idx_events_timestamp']
     },
     sessions: {
+      comment: 'Sessions utilisateur analytiques',
       columns: [
-        {name:'id',type:'VARCHAR(255)',pk:true,nullable:false},
-        {name:'user_id',type:'BIGINT',pk:false,nullable:true},
-        {name:'started_at',type:'TIMESTAMP',pk:false,nullable:false},
-        {name:'ended_at',type:'TIMESTAMP',pk:false,nullable:true},
-        {name:'page_views',type:'INTEGER',pk:false,nullable:true},
-        {name:'device',type:'VARCHAR(50)',pk:false,nullable:true}
+        {name:'id',type:'VARCHAR(255)',pk:true,nullable:false,comment:'Identifiant session'},
+        {name:'user_id',type:'BIGINT',pk:false,nullable:true,comment:'Utilisateur associe'},
+        {name:'started_at',type:'TIMESTAMP',pk:false,nullable:false,comment:'Debut de session'},
+        {name:'ended_at',type:'TIMESTAMP',pk:false,nullable:true,comment:'Fin de session'},
+        {name:'page_views',type:'INTEGER',pk:false,nullable:true,comment:'Nombre de pages vues'},
+        {name:'device',type:'VARCHAR(50)',pk:false,nullable:true,comment:'Appareil utilise'}
       ], indexes:['idx_sessions_user']
     }
   },
   hr: {
     employees: {
+      comment: 'Employes de l\'entreprise',
       columns: [
-        {name:'id',type:'BIGINT',pk:true,nullable:false},
-        {name:'first_name',type:'VARCHAR(100)',pk:false,nullable:false},
-        {name:'last_name',type:'VARCHAR(100)',pk:false,nullable:false},
-        {name:'department',type:'VARCHAR(100)',pk:false,nullable:true},
-        {name:'salary',type:'DECIMAL(10,2)',pk:false,nullable:true},
-        {name:'hire_date',type:'DATE',pk:false,nullable:false}
+        {name:'id',type:'BIGINT',pk:true,nullable:false,comment:'Identifiant employe'},
+        {name:'first_name',type:'VARCHAR(100)',pk:false,nullable:false,comment:'Prenom'},
+        {name:'last_name',type:'VARCHAR(100)',pk:false,nullable:false,comment:'Nom de famille'},
+        {name:'department',type:'VARCHAR(100)',pk:false,nullable:true,comment:'Departement'},
+        {name:'salary',type:'DECIMAL(10,2)',pk:false,nullable:true,comment:'Salaire annuel'},
+        {name:'hire_date',type:'DATE',pk:false,nullable:false,comment:'Date d\'embauche'}
       ], indexes:['idx_emp_dept']
     },
     departments: {
+      comment: 'Departements de l\'entreprise',
       columns: [
-        {name:'id',type:'BIGINT',pk:true,nullable:false},
-        {name:'name',type:'VARCHAR(100)',pk:false,nullable:false},
-        {name:'budget',type:'DECIMAL(12,2)',pk:false,nullable:true},
-        {name:'manager_id',type:'BIGINT',pk:false,nullable:true}
+        {name:'id',type:'BIGINT',pk:true,nullable:false,comment:'Identifiant departement'},
+        {name:'name',type:'VARCHAR(100)',pk:false,nullable:false,comment:'Nom du departement'},
+        {name:'budget',type:'DECIMAL(12,2)',pk:false,nullable:true,comment:'Budget annuel'},
+        {name:'manager_id',type:'BIGINT',pk:false,nullable:true,comment:'Manager responsable'}
       ], indexes:[]
     }
   }
@@ -637,16 +636,15 @@ const state = {
   serverAvailable: false,
   history: [],
   metrics: {totalQueries:0,successfulQueries:0,avgLatency:0,totalLatency:0,correctFeedback:0,incorrectFeedback:0},
-  strategyAccuracy:{intent_graph:.88,lsh_multi_probe:.82,syntactic_parser:.92,thesaurus_hash:.78,regex_rules:.70},
-  strategyWeights:{intent_graph:1.0,lsh_multi_probe:.9,syntactic_parser:1.2,thesaurus_hash:.8,regex_rules:.6},
+  strategyAccuracy:{intent_graph:.88,lsh_multi_probe:.82,syntactic_parser:.92,thesaurus_hash:.78,regex_rules:.70,template_match:.95},
+  strategyWeights:{intent_graph:1.0,lsh_multi_probe:.9,syntactic_parser:1.2,thesaurus_hash:.8,regex_rules:.6,template_match:1.5},
   patterns:[],
   expandedTables:new Set(),
   activeTab:'metrics',
   isProcessing:false,
   lastQueryId: null,
   lastSql: '',
-  llmMode: 'ensemble',
-  llmStatus: {available:false,loading:false,enabled:false,modelLabel:'Qwen3.5'}
+  templates: []
 };
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -682,127 +680,48 @@ async function apiPost(path, body) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   LLM FUNCTIONS
+   TEMPLATE LOADING
    ═══════════════════════════════════════════════════════════════════════ */
 
-async function checkLLMStatus() {
+async function loadTemplates() {
   try {
-    const data = await apiGet('/api/llm');
-    state.llmStatus = {
-      available: data.available || false,
-      loading: data.loading || false,
-      enabled: data.enabled || false,
-      modelLabel: data.modelLabel || 'Qwen3.5',
-      modelPath: data.modelPath || '',
-      error: data.error || null
-    };
+    const data = await apiGet('/api/templates');
+    state.templates = data.templates || [];
   } catch (e) {
-    state.llmStatus.available = false;
-    state.llmStatus.loading = false;
+    console.warn('Templates API unavailable, using fallback templates:', e.message);
+    state.templates = [
+      {name:'Selection simple',description:'SELECT basique',sample:'montre tous les utilisateurs'},
+      {name:'Filtrage actif',description:'WHERE active = true',sample:'utilisateurs actifs'},
+      {name:'Jointure',description:'JOIN deux tables',sample:'joindre utilisateurs et commandes'},
+      {name:'Agregation',description:'COUNT/SUM/AVG',sample:'nombre de commandes par statut'},
+      {name:'Tri et limite',description:'ORDER BY + LIMIT',sample:'les 5 produits les plus chers'},
+      {name:'Schema info',description:'DESCRIBE table',sample:'decris la table orders'}
+    ];
   }
-  updateLLMBadge();
+  renderTemplates();
 }
 
-function updateLLMBadge() {
-  const dot = document.getElementById('llm-badge-dot');
-  const label = document.getElementById('llm-badge-label');
-  const statusEl = document.getElementById('status-llm');
-  if (!dot) return;
-
-  dot.className = 'llm-badge-dot';
-  label.className = 'llm-badge-label';
-
-  if (state.llmStatus.available) {
-    dot.classList.add('available');
-    label.classList.add('available');
-    label.textContent = state.llmStatus.modelLabel;
-    if (statusEl) statusEl.textContent = 'LLM: ' + state.llmStatus.modelLabel + ' ✓';
-  } else if (state.llmStatus.loading) {
-    dot.classList.add('loading');
-    label.classList.add('loading');
-    label.textContent = 'Loading...';
-    if (statusEl) statusEl.textContent = 'LLM: Loading...';
-  } else {
-    label.textContent = 'LLM Off';
-    if (statusEl) statusEl.textContent = 'LLM: Disabled';
-  }
-}
-
-function setMode(mode, btn) {
-  state.llmMode = mode;
-  document.querySelectorAll('.mode-btn').forEach(function(b) { b.classList.remove('active'); });
-  btn.classList.add('active');
-  showToast('Mode: ' + mode.charAt(0).toUpperCase() + mode.slice(1), 'info');
-}
-
-async function generateWithLLM(query, db) {
-  try {
-    const data = await apiPost('/api/llm/generate', {query: query, database: db});
-    return data;
-  } catch (e) {
-    console.warn('LLM generate failed:', e.message);
-    return null;
-  }
-}
-
-async function explainWithLLM(btn) {
-  const sqlOutput = btn.closest('.sql-output');
-  const sqlCodeEl = sqlOutput.querySelector('.sql-code');
-  let sql = sqlCodeEl.getAttribute('data-raw-sql');
-  const currentText = sqlCodeEl.textContent.trim();
-  if (currentText && currentText !== sql) {
-    sql = currentText;
-  }
-
-  if (!sql || sql.startsWith('--')) {
-    showToast('SQL invalide ou vide pour explication', 'error');
+function renderTemplates() {
+  const el = document.getElementById('templates-list');
+  if (!el) return;
+  if (state.templates.length === 0) {
+    el.innerHTML = '<div style="color:var(--text-muted);font-size:11px;text-align:center;padding:8px">Aucun template disponible</div>';
     return;
   }
-
-  const db = state.selectedDb;
-  if (!db) {
-    showToast('Aucune base de donnees selectionnee', 'error');
-    return;
-  }
-
-  btn.disabled = true;
-  const origHtml = btn.innerHTML;
-  btn.innerHTML = '<span style="animation:pulse .8s infinite">&#129302;</span> Analysing...';
-
-  const msgBody = btn.closest('.msg-body');
-
-  try {
-    const data = await apiPost('/api/llm/explain', {sql: sql, database: db});
-
-    /* Remove any existing explanation in this msg body */
-    const existing = msgBody.querySelector('.llm-explanation');
-    if (existing) existing.remove();
-
-    /* Add explanation card */
-    const explanationHtml = '<div class="llm-explanation">'
-      + '<div class="llm-explanation-header">&#129302; LLM Explanation (' + (state.llmStatus.modelLabel || 'Qwen3.5') + ')</div>'
-      + '<div class="llm-explanation-text">' + escapeHtml(data.explanation || 'No explanation available') + '</div>'
+  el.innerHTML = state.templates.map(function(t) {
+    return '<div class="template-item" onclick="useTemplate(\'' + (t.sample || t.name).replace(/'/g,"\\'") + '\')">'
+      + '<span class="template-item-icon">&#128196;</span>'
+      + '<span class="template-item-name">' + escapeHtml(t.name) + '</span>'
+      + (t.description ? '<span class="template-item-desc">' + escapeHtml(t.description) + '</span>' : '')
       + '</div>';
-    msgBody.insertAdjacentHTML('beforeend', explanationHtml);
-    showToast('Explication LLM generee', 'success');
+  }).join('');
+}
 
-  } catch (e) {
-    showToast('LLM indisponible pour explication', 'info');
-    /* Add fallback explanation */
-    const existing = msgBody.querySelector('.llm-explanation');
-    if (existing) existing.remove();
-    const fallbackHtml = '<div class="llm-explanation">'
-      + '<div class="llm-explanation-header">&#129302; LLM Explanation (Indisponible)</div>'
-      + '<div class="llm-explanation-text">Le modele LLM n\'est pas disponible. Configurez un modele GGUF dans llm-config.json pour activer cette fonctionnalite.</div>'
-      + '</div>';
-    msgBody.insertAdjacentHTML('beforeend', fallbackHtml);
-  }
-
-  btn.disabled = false;
-  btn.innerHTML = origHtml;
-
-  const container = document.getElementById('chat-messages');
-  container.scrollTop = container.scrollHeight;
+function useTemplate(sample) {
+  document.getElementById('query-input').value = sample;
+  autoResize(document.getElementById('query-input'));
+  updateCharCount();
+  document.getElementById('query-input').focus();
 }
 
 /* ═══════════════════════════════════════════════════════════════════════
@@ -899,7 +818,7 @@ function updateStatusBar() {
 
 /* ═══════════════════════════════════════════════════════════════════════
    SIMULATION ENGINE (fallback when server unavailable)
-   Mirrors the Java backend: 5-strategy ensemble resolver + SQL generator
+   Mirrors the Java backend: 6-strategy ensemble resolver + SQL generator
    ═══════════════════════════════════════════════════════════════════════ */
 
 function resolveIntent(query) {
@@ -989,6 +908,20 @@ function resolveIntent(query) {
   for (const [pat,intent,conf] of rules) { if (pat.test(q)) { regIntent=intent; regConf=conf; break; } }
   votes.push({strategy:'regex_rules',intentType:regIntent,rawConfidence:regConf,weightedScore:regConf*weights.regex_rules});
 
+  /* Strategy 6: Template Match */
+  let tmplIntent = 'Unknown', tmplConf = .1;
+  const templatePatterns = [
+    [/\b(montre|affiche|liste|select)\s+(tous|toutes|les+)\s*(utilisateurs|users|commandes|orders|produits|products|employes|employees|evenements|events|sessions)/,'Select',.92],
+    [/\b(combien|nombre|count|total)\s+(de|of)\s*(commandes|orders|utilisateurs|users|produits|products)/,'Aggregate',.90],
+    [/\b(joindre|join|combine)\s+(utilisateurs|users)\s+(et|and|avec)\s+(commandes|orders)/,'Join',.93],
+    [/\b(ajoute|ajouter|insert|add)\s+(un|une|nouvel|nouvelle)\s*(utilisateur|user|commande|order|produit|product)/,'Insert',.91],
+    [/\b(supprime|supprimer|delete|remove)\s+(les|the)\s*(utilisateurs|users|commandes|orders)\s*(inactif|inactive)/,'Delete',.90],
+    [/\b(decris|describe|schema|structure)\s+(la|the)\s*table\s*(\w+)/,'SchemaInfo',.94],
+    [/\b(produits|products)\s*(les|the)?\s*(plus|most)\s*(cher|expensive)/,'Select',.91],
+  ];
+  for (const [pat,intent,conf] of templatePatterns) { if (pat.test(q)) { tmplIntent=intent; tmplConf=conf; break; } }
+  votes.push({strategy:'template_match',intentType:tmplIntent,rawConfidence:tmplConf,weightedScore:tmplConf*weights.template_match});
+
   /* Aggregate votes */
   const scores = {};
   const bestRaw = {};
@@ -1013,7 +946,6 @@ function generateSQL(query, intent) {
     const tableNames = Object.keys(schema);
     if (tableNames.length === 0) return 'unknown_table';
     for (const t of tableNames) { if (s.includes(t.toLowerCase()) || s.includes(t)) return t; }
-    /* French / English aliases */
     const map = {};
     for (const t of tableNames) {
       map[t.toLowerCase()] = t;
@@ -1110,7 +1042,7 @@ function generateSQL(query, intent) {
       return 'EXPLAIN ANALYZE\nSELECT * FROM '+resolveTable(q)+' WHERE id = :id;';
     case 'SchemaInfo': {
       const table = resolveTable(q);
-      const cols = schema[table]?.columns.map(c=>'  '+c.name+' '+c.type+(c.pk?' PRIMARY KEY':'')+(c.nullable?'':' NOT NULL')).join(',\n') || 'id BIGINT PRIMARY KEY';
+      const cols = schema[table]?.columns.map(c=>'  '+c.name+' '+c.type+(c.pk?' PRIMARY KEY':'')+(c.nullable?'':' NOT NULL')+(c.comment?' -- '+c.comment:'')).join(',\n') || 'id BIGINT PRIMARY KEY';
       return '-- Schema: '+table+'\n-- Columns:\n'+cols;
     }
     default:
@@ -1119,7 +1051,6 @@ function generateSQL(query, intent) {
 }
 
 function simulateExecute(sql) {
-  /* Simple simulation of query execution */
   const isSelect = /^\s*SELECT/i.test(sql);
   const isInsert = /^\s*INSERT/i.test(sql);
   const isUpdate = /^\s*UPDATE/i.test(sql);
@@ -1198,22 +1129,30 @@ function renderSchema() {
     const expanded = state.expandedTables.has(table);
     const colCount = (tableSchema.columns || []).length;
     const idxCount = (tableSchema.indexes || []).length;
+    const tableComment = tableSchema.comment || '';
     html += '<div class="schema-section">'
       + '<button class="schema-table-btn '+(expanded?'active':'')+'" onclick="toggleSchemaTable(\''+table+'\')">'
       + '<span class="schema-table-icon">T</span>'
       + '<div>'
       + '<div class="schema-table-name">'+table+'</div>'
+      + (tableComment ? '<div class="schema-table-comment">'+escapeHtml(tableComment)+'</div>' : '')
       + '<div class="schema-table-cols">'+colCount+' columns &middot; '+idxCount+' indexes</div>'
       + '</div>'
       + '</button>';
     if (expanded) {
       html += '<div class="schema-columns">';
       for (const c of (tableSchema.columns || [])) {
-        html += '<div class="schema-col">'
+        const colComment = c.comment || '';
+        html += '<div class="schema-col"'
+          + (colComment ? ' title="'+escapeAttr(colComment)+'"' : '')
+          + '>'
+          + '<div class="schema-col-main">'
           + '<span class="schema-col-name">'+c.name+'</span>'
           + '<span class="schema-col-type">'+c.type+'</span>'
           + (c.pk ? '<span class="schema-col-pk">PK</span>' : '')
           + (c.nullable ? '<span class="schema-col-nullable">NULL</span>' : '')
+          + '</div>'
+          + (colComment ? '<div class="schema-col-comment">'+escapeHtml(colComment)+'</div>' : '')
           + '</div>';
       }
       html += '</div>';
@@ -1293,7 +1232,6 @@ function renderHistory() {
    ═══════════════════════════════════════════════════════════════════════ */
 
 function renderResultsCard(container, result, execTime) {
-  /* Remove any previous results card in this msg-body */
   const existing = container.querySelector('.results-card');
   if (existing) existing.remove();
 
@@ -1404,9 +1342,6 @@ function addMessage(role, content, extras) {
         + '<button class="exec-btn" onclick="executeSQL(this)" title="Executer le SQL">'
         + '<span class="exec-icon">&#9654;</span> Executer'
         + '</button>'
-        + '<button class="explain-btn" onclick="explainWithLLM(this)" title="Expliquer avec le LLM">'
-        + '<span>&#129302;</span> Explain'
-        + '</button>'
         + '</div>'
         + '</div>'
         + '<div class="sql-code" contenteditable="true" spellcheck="false" data-raw-sql="'+escapeAttr(extras.sql)+'">'+highlightSQL(extras.sql)+'</div>'
@@ -1425,7 +1360,7 @@ function addMessage(role, content, extras) {
 
     if (extras.votes && extras.votes.length) {
       const maxScore = Math.max(...extras.votes.map(v=>v.weightedScore),0.01);
-      html += '<div class="vote-section"><div class="vote-title">Vote Ensemble (5 strategies)</div>';
+      html += '<div class="vote-section"><div class="vote-title">Vote Ensemble (6 strategies)</div>';
       for (const v of extras.votes) {
         const pct = (v.weightedScore/maxScore*100).toFixed(1);
         html += '<div class="vote-row">'
@@ -1499,151 +1434,42 @@ async function sendQuery() {
   const typingId = addTypingIndicator();
 
   try {
-    /* Route based on mode */
-    if (state.llmMode === 'llm') {
-      /* LLM-only mode */
-      const startTime = performance.now();
-      const llmData = await generateWithLLM(query, state.selectedDb);
-      const latency = Math.round((performance.now() - startTime) * 100);
-      removeTypingIndicator(typingId);
+    /* Ensemble resolver (now includes templates) */
+    const startTime = performance.now();
+    const data = await apiPost('/api/query', {query: query, database: state.selectedDb});
+    const latency = Math.round((performance.now() - startTime) * 100);
+    removeTypingIndicator(typingId);
 
-      if (llmData && llmData.sql) {
-        const sql = llmData.sql;
-        const confidence = llmData.confidence || 0;
-        const valid = sql.length > 5 && !sql.startsWith('--');
-        const queryId = state.history.length;
+    const sql = data.sql || '';
+    const intent = data.intent || 'Unknown';
+    const confidence = data.confidence || 0;
+    const votes = data.votes || [];
+    const scores = data.scores || {};
+    const queryId = data.queryId;
+    const valid = sql.length > 5 && !sql.startsWith('--');
 
-        state.lastQueryId = queryId;
-        state.lastSql = sql;
+    state.lastQueryId = queryId;
+    state.lastSql = sql;
 
-        state.history.push({query, intent:'LLM', sql, latency, confidence, votes:[], time:Date.now(), db:state.selectedDb});
-        state.metrics.totalQueries++;
-        state.metrics.successfulQueries++;
-        state.metrics.totalLatency += latency;
+    state.history.push({query, intent, sql, latency, confidence, votes, time:Date.now(), db:state.selectedDb});
+    state.metrics.totalQueries++;
+    state.metrics.successfulQueries++;
+    state.metrics.totalLatency += latency;
 
-        const existing = state.patterns.find(p => p.intent === 'LLM');
-        if (existing) { existing.freq++; existing.avgConf = (existing.avgConf + confidence)/2; }
-        else state.patterns.push({intent:'LLM', freq:1, avgConf:confidence});
-        state.patterns.sort((a,b)=>b.freq-a.freq);
+    const existing = state.patterns.find(p => p.intent === intent);
+    if (existing) { existing.freq++; existing.avgConf = (existing.avgConf + confidence)/2; }
+    else state.patterns.push({intent, freq:1, avgConf:confidence});
+    state.patterns.sort((a,b)=>b.freq-a.freq);
 
-        addMessage('assistant', 'Voici la requete SQL generee par le LLM :', {
-          sql,
-          meta: {intent:'LLM', confidence, latency, valid},
-          votes: [],
-          queryId,
-          sqlId: 'sql-'+Date.now()
-        });
+    addMessage('assistant', 'Voici la requete SQL generee pour votre demande :', {
+      sql,
+      meta: {intent, confidence, latency, valid},
+      votes,
+      queryId,
+      sqlId: 'sql-'+Date.now()
+    });
 
-        /* Add LLM explanation if available */
-        if (llmData.explanation) {
-          const msgBodies = document.querySelectorAll('.msg-body');
-          const lastMsgBody = msgBodies[msgBodies.length - 1];
-          if (lastMsgBody) {
-            const explanationHtml = '<div class="llm-explanation">'
-              + '<div class="llm-explanation-header">&#129302; LLM Explanation (' + (state.llmStatus.modelLabel || 'Qwen3.5') + ')</div>'
-              + '<div class="llm-explanation-text">' + escapeHtml(llmData.explanation) + '</div>'
-              + '</div>';
-            lastMsgBody.insertAdjacentHTML('beforeend', explanationHtml);
-          }
-        }
-
-        document.getElementById('status-latency').textContent = 'Latence: '+latency+'\u00B5s';
-      } else {
-        addMessage('assistant', 'Le LLM n\'est pas disponible. Veuillez configurer un modele GGUF ou utiliser le mode Ensemble.');
-      }
-    } else if (state.llmMode === 'hybrid') {
-      /* Hybrid mode: Ensemble first, then LLM refine */
-      const startTime = performance.now();
-      const data = await apiPost('/api/query', {query: query, database: state.selectedDb});
-      const latency = Math.round((performance.now() - startTime) * 100);
-      removeTypingIndicator(typingId);
-
-      const sql = data.sql || '';
-      const intent = data.intent || 'Unknown';
-      const confidence = data.confidence || 0;
-      const votes = data.votes || [];
-      const queryId = data.queryId;
-      const valid = sql.length > 5 && !sql.startsWith('--');
-
-      state.lastQueryId = queryId;
-      state.lastSql = sql;
-
-      state.history.push({query, intent, sql, latency, confidence, votes, time:Date.now(), db:state.selectedDb});
-      state.metrics.totalQueries++;
-      state.metrics.successfulQueries++;
-      state.metrics.totalLatency += latency;
-
-      const existing = state.patterns.find(p => p.intent === intent);
-      if (existing) { existing.freq++; existing.avgConf = (existing.avgConf + confidence)/2; }
-      else state.patterns.push({intent, freq:1, avgConf:confidence});
-      state.patterns.sort((a,b)=>b.freq-a.freq);
-
-      addMessage('assistant', 'Voici la requete SQL generee (Hybrid: Ensemble + LLM) :', {
-        sql,
-        meta: {intent, confidence, latency, valid},
-        votes,
-        queryId,
-        sqlId: 'sql-'+Date.now()
-      });
-
-      /* Try LLM refine in background */
-      if (state.llmStatus.available && sql && valid) {
-        try {
-          const llmData = await generateWithLLM(query, state.selectedDb);
-          if (llmData && llmData.explanation) {
-            const msgBodies = document.querySelectorAll('.msg-body');
-            const lastMsgBody = msgBodies[msgBodies.length - 1];
-            if (lastMsgBody) {
-              const explanationHtml = '<div class="llm-explanation">'
-                + '<div class="llm-explanation-header">&#129302; LLM Refinement (' + (state.llmStatus.modelLabel || 'Qwen3.5') + ')</div>'
-                + '<div class="llm-explanation-text">' + escapeHtml(llmData.explanation) + '</div>'
-                + '</div>';
-              lastMsgBody.insertAdjacentHTML('beforeend', explanationHtml);
-            }
-          }
-        } catch (e) { /* LLM refine failed silently */ }
-      }
-
-      document.getElementById('status-latency').textContent = 'Latence: '+latency+'\u00B5s';
-
-    } else {
-      /* Ensemble mode (default) */
-      const startTime = performance.now();
-      const data = await apiPost('/api/query', {query: query, database: state.selectedDb});
-      const latency = Math.round((performance.now() - startTime) * 100);
-      removeTypingIndicator(typingId);
-
-      const sql = data.sql || '';
-      const intent = data.intent || 'Unknown';
-      const confidence = data.confidence || 0;
-      const votes = data.votes || [];
-      const scores = data.scores || {};
-      const queryId = data.queryId;
-      const valid = sql.length > 5 && !sql.startsWith('--');
-
-      state.lastQueryId = queryId;
-      state.lastSql = sql;
-
-      state.history.push({query, intent, sql, latency, confidence, votes, time:Date.now(), db:state.selectedDb});
-      state.metrics.totalQueries++;
-      state.metrics.successfulQueries++;
-      state.metrics.totalLatency += latency;
-
-      const existing = state.patterns.find(p => p.intent === intent);
-      if (existing) { existing.freq++; existing.avgConf = (existing.avgConf + confidence)/2; }
-      else state.patterns.push({intent, freq:1, avgConf:confidence});
-      state.patterns.sort((a,b)=>b.freq-a.freq);
-
-      addMessage('assistant', 'Voici la requete SQL generee pour votre demande :', {
-        sql,
-        meta: {intent, confidence, latency, valid},
-        votes,
-        queryId,
-        sqlId: 'sql-'+Date.now()
-      });
-
-      document.getElementById('status-latency').textContent = 'Latence: '+latency+'\u00B5s';
-    }
+    document.getElementById('status-latency').textContent = 'Latence: '+latency+'\u00B5s';
 
   } catch (e) {
     /* Fallback to simulation */
@@ -1698,9 +1524,7 @@ async function sendQuery() {
 async function executeSQL(btn) {
   const sqlOutput = btn.closest('.sql-output');
   const sqlCodeEl = sqlOutput.querySelector('.sql-code');
-  /* Get the raw SQL from the data attribute (original), or from contenteditable text if edited */
   let sql = sqlCodeEl.getAttribute('data-raw-sql');
-  /* If user edited the contenteditable, get the text content */
   const currentText = sqlCodeEl.textContent.trim();
   if (currentText && currentText !== sql) {
     sql = currentText;
@@ -1768,11 +1592,15 @@ function submitFeedback(queryId, isCorrect, btn) {
   if (h && h.votes) {
     for (const v of h.votes) {
       const current = state.strategyWeights[v.strategy];
-      if (isCorrect) state.strategyWeights[v.strategy] = Math.min(2.0, current * 1.05);
-      else state.strategyWeights[v.strategy] = Math.max(0.3, current * 0.95);
+      if (current !== undefined) {
+        if (isCorrect) state.strategyWeights[v.strategy] = Math.min(2.0, current * 1.05);
+        else state.strategyWeights[v.strategy] = Math.max(0.3, current * 0.95);
+      }
 
-      const acc = state.strategyAccuracy[v.strategy] || 0.5;
-      state.strategyAccuracy[v.strategy] = acc * 0.9 + (isCorrect ? 1 : 0) * 0.1;
+      const acc = state.strategyAccuracy[v.strategy];
+      if (acc !== undefined) {
+        state.strategyAccuracy[v.strategy] = acc * 0.9 + (isCorrect ? 1 : 0) * 0.1;
+      }
     }
   }
 
@@ -1876,7 +1704,7 @@ function clearChat() {
   const container = document.getElementById('chat-messages');
   container.innerHTML = '<div class="welcome" id="welcome-screen">'
     + '<div class="welcome-icon">SQL</div>'
-    + '<h2>Enterprise SQL Assistant V4</h2>'
+    + '<h2>Enterprise SQL Assistant V5</h2>'
     + '<p>Transformez vos requetes en langage naturel en SQL optimise.</p>'
     + '</div>';
   state.history = [];
@@ -2018,8 +1846,8 @@ async function init() {
   /* Load databases and schema from server */
   await loadDatabases();
 
-  /* Check LLM status */
-  checkLLMStatus();
+  /* Load templates */
+  loadTemplates();
 
   /* Load server metrics, strategies, patterns in background */
   loadServerMetrics();
@@ -2032,7 +1860,7 @@ async function init() {
       loadServerMetrics();
       loadServerStrategies();
       loadServerPatterns();
-      checkLLMStatus();
+      loadTemplates();
       updateStatusBar();
     }
   }, 10000);

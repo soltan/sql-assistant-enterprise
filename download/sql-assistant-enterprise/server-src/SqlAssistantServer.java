@@ -1,7 +1,6 @@
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpExchange;
-import com.llama4j.LLMAdapter;
 
 import java.io.*;
 import java.net.InetSocketAddress;
@@ -17,7 +16,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * Enterprise SQL Assistant V4 — JDK HttpServer Backend + Multi-Database + LLM
+ * Enterprise SQL Assistant V4 — JDK HttpServer Backend + Multi-Database + SQL Templates
  * ====================================================
  * Pure Java server using com.sun.net.httpserver.HttpServer + JDBC.
  * No framework, no external deps (except JDBC drivers) — just the JDK + H2.
@@ -26,17 +25,16 @@ import java.util.stream.Collectors;
  *   - Multi-database support via JDBC (configured in databases.json)
  *   - Dynamic schema discovery at startup via DatabaseMetaData
  *   - SQL query execution with result sets returned as JSON tables
- *   - 5-strategy ensemble resolver (weighted voting)
+ *   - 6-strategy ensemble resolver (weighted voting) + SQL Templates
  *   - Adaptive feedback system
- *   - LLM REFINER — Qwen35 local model refines SQL and provides explanations
+ *   - COMMENT ON TABLE/COLUMN for rich schema documentation
  *
  * Architecture:
  *   1. PERCEIVE  — Normalize input
- *   2. REASON    — 5-strategy ensemble resolver (weighted voting)
- *   3. ACT       — Generate SQL from resolved intent
+ *   2. REASON    — 6-strategy ensemble resolver (weighted voting + template matching)
+ *   3. ACT       — Generate SQL from resolved intent (template-first)
  *   4. REFLECT   — Validate and score
  *   5. EXECUTE   — Run SQL against selected database
- *   6. LLM REFINER — Qwen35 local model refines SQL and provides explanations
  *
  * Endpoints:
  *   GET  /                → Client HTML
@@ -48,13 +46,9 @@ import java.util.stream.Collectors;
  *   GET  /api/strategies  → Strategy weights & accuracy
  *   GET  /api/patterns    → Mined query patterns
  *   POST /api/feedback    → Submit feedback (adapts weights)
- *   GET  /api/llm         → LLM status
- *   POST /api/llm/generate → Generate SQL with LLM
- *   POST /api/llm/explain → Explain SQL with LLM
+ *   GET  /api/templates   → Available SQL templates
  */
 public class SqlAssistantServer {
-
-    static LLMAdapter llmAdapter;
 
     // ═══════════════════════════════════════════════════════════
     // DATABASE MANAGER — Multi-DB JDBC Connections + Schema Discovery
@@ -118,7 +112,6 @@ public class SqlAssistantServer {
             DatabaseMetaData meta = conn.getMetaData();
 
             // Get all tables (filter out H2 system tables)
-            String[] schemas = {"PUBLIC", "public"};
             try (ResultSet tables = meta.getTables(null, "PUBLIC", "%", new String[]{"TABLE"})) {
                 while (tables.next()) {
                     String tableName = tables.getString("TABLE_NAME");
@@ -126,17 +119,21 @@ public class SqlAssistantServer {
                     if (tableName.startsWith("INFORMATION_SCHEMA") || tableName.startsWith("SYSTEM_")
                         || tableName.equals("DATABASECHANGELOG") || tableName.equals("DATABASECHANGELOGLOCK"))
                         continue;
+                    String tableRemark = tables.getString("REMARKS");
+                    if (tableRemark == null) tableRemark = "";
                     List<ColumnDef> columns = new ArrayList<>();
                     List<String> indexes = new ArrayList<>();
 
-                    // Get columns
-                    try (ResultSet cols = meta.getColumns(null, null, tableName, "%")) {
+                    // Get columns (specify PUBLIC schema to avoid H2 system columns)
+                    try (ResultSet cols = meta.getColumns(null, "PUBLIC", tableName, "%")) {
                         while (cols.next()) {
                             String colName = cols.getString("COLUMN_NAME");
                             String colType = cols.getString("TYPE_NAME");
                             int colSize = cols.getInt("COLUMN_SIZE");
                             String nullable = cols.getString("IS_NULLABLE");
                             String isAutoInc = cols.getString("IS_AUTOINCREMENT");
+                            String colRemark = cols.getString("REMARKS");
+                            if (colRemark == null) colRemark = "";
 
                             // Format type with size
                             String typeStr = colType;
@@ -150,7 +147,7 @@ public class SqlAssistantServer {
                             }
 
                             columns.add(new ColumnDef(colName, typeStr, false,
-                                "YES".equalsIgnoreCase(nullable)));
+                                "YES".equalsIgnoreCase(nullable), colRemark));
                         }
                     }
 
@@ -164,7 +161,7 @@ public class SqlAssistantServer {
                     // Mark PK columns
                     List<ColumnDef> updatedCols = columns.stream()
                         .map(c -> pkCols.contains(c.name)
-                            ? new ColumnDef(c.name, c.type, true, c.nullable) : c)
+                            ? new ColumnDef(c.name, c.type, true, c.nullable, c.comment) : c)
                         .collect(Collectors.toList());
 
                     // Get indexes
@@ -178,7 +175,7 @@ public class SqlAssistantServer {
                         }
                     }
 
-                    result.put(tableName.toLowerCase(), new TableSchema(tableName, updatedCols, indexes));
+                    result.put(tableName.toLowerCase(), new TableSchema(tableName, updatedCols, indexes, tableRemark));
                 }
             }
             return result;
@@ -194,6 +191,13 @@ public class SqlAssistantServer {
                         "email VARCHAR(512) NOT NULL, " +
                         "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                         "active BOOLEAN DEFAULT TRUE)");
+                    stmt.execute("COMMENT ON TABLE users IS 'Utilisateurs inscrits sur la plateforme e-commerce'");
+                    stmt.execute("COMMENT ON COLUMN users.id IS 'Identifiant unique de l utilisateur'");
+                    stmt.execute("COMMENT ON COLUMN users.username IS 'Nom d utilisateur unique'");
+                    stmt.execute("COMMENT ON COLUMN users.email IS 'Adresse email de l utilisateur'");
+                    stmt.execute("COMMENT ON COLUMN users.created_at IS 'Date de creation du compte'");
+                    stmt.execute("COMMENT ON COLUMN users.active IS 'Indique si le compte est actif'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS products (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "name VARCHAR(512) NOT NULL, " +
@@ -201,6 +205,14 @@ public class SqlAssistantServer {
                         "price DECIMAL(10,2) NOT NULL, " +
                         "category VARCHAR(100), " +
                         "stock INTEGER NOT NULL DEFAULT 0)");
+                    stmt.execute("COMMENT ON TABLE products IS 'Catalogue des produits disponibles'");
+                    stmt.execute("COMMENT ON COLUMN products.id IS 'Identifiant unique du produit'");
+                    stmt.execute("COMMENT ON COLUMN products.name IS 'Nom du produit'");
+                    stmt.execute("COMMENT ON COLUMN products.description IS 'Description detaillee du produit'");
+                    stmt.execute("COMMENT ON COLUMN products.price IS 'Prix unitaire du produit'");
+                    stmt.execute("COMMENT ON COLUMN products.category IS 'Categorie du produit'");
+                    stmt.execute("COMMENT ON COLUMN products.stock IS 'Quantite en stock'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS orders (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "user_id BIGINT NOT NULL, " +
@@ -209,17 +221,36 @@ public class SqlAssistantServer {
                         "total_price DECIMAL(10,2) NOT NULL, " +
                         "order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                         "status VARCHAR(50) DEFAULT 'pending')");
+                    stmt.execute("COMMENT ON TABLE orders IS 'Commandes passees par les utilisateurs'");
+                    stmt.execute("COMMENT ON COLUMN orders.id IS 'Identifiant unique de la commande'");
+                    stmt.execute("COMMENT ON COLUMN orders.user_id IS 'Reference vers l utilisateur'");
+                    stmt.execute("COMMENT ON COLUMN orders.product_id IS 'Reference vers le produit'");
+                    stmt.execute("COMMENT ON COLUMN orders.quantity IS 'Quantite commandee'");
+                    stmt.execute("COMMENT ON COLUMN orders.total_price IS 'Prix total de la commande'");
+                    stmt.execute("COMMENT ON COLUMN orders.order_date IS 'Date de la commande'");
+                    stmt.execute("COMMENT ON COLUMN orders.status IS 'Statut de la commande (pending, shipped, delivered, cancelled)'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS order_items (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "order_id BIGINT NOT NULL, " +
                         "product_id BIGINT NOT NULL, " +
                         "quantity INTEGER NOT NULL, " +
                         "unit_price DECIMAL(10,2) NOT NULL)");
+                    stmt.execute("COMMENT ON TABLE order_items IS 'Lignes de commande detaillees'");
+                    stmt.execute("COMMENT ON COLUMN order_items.order_id IS 'Reference vers la commande'");
+                    stmt.execute("COMMENT ON COLUMN order_items.product_id IS 'Reference vers le produit'");
+                    stmt.execute("COMMENT ON COLUMN order_items.quantity IS 'Quantite commandee'");
+                    stmt.execute("COMMENT ON COLUMN order_items.unit_price IS 'Prix unitaire au moment de la commande'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS categories (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "name VARCHAR(100) NOT NULL, " +
                         "description TEXT, " +
                         "parent_id BIGINT)");
+                    stmt.execute("COMMENT ON TABLE categories IS 'Categories de produits hierarchiques'");
+                    stmt.execute("COMMENT ON COLUMN categories.name IS 'Nom de la categorie'");
+                    stmt.execute("COMMENT ON COLUMN categories.description IS 'Description de la categorie'");
+                    stmt.execute("COMMENT ON COLUMN categories.parent_id IS 'Reference vers la categorie parente'");
                     break;
 
                 case "Analytics":
@@ -231,6 +262,14 @@ public class SqlAssistantServer {
                         "page_url VARCHAR(1024), " +
                         "event_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                         "properties TEXT)");
+                    stmt.execute("COMMENT ON TABLE events IS 'Evenements de tracking utilisateur'");
+                    stmt.execute("COMMENT ON COLUMN events.event_type IS 'Type d evenement (click, view, purchase, etc.)'");
+                    stmt.execute("COMMENT ON COLUMN events.user_id IS 'Reference vers l utilisateur'");
+                    stmt.execute("COMMENT ON COLUMN events.session_id IS 'Identifiant de session'");
+                    stmt.execute("COMMENT ON COLUMN events.page_url IS 'URL de la page visitee'");
+                    stmt.execute("COMMENT ON COLUMN events.event_time IS 'Horodatage de l evenement'");
+                    stmt.execute("COMMENT ON COLUMN events.properties IS 'Proprietes additionnelles au format JSON'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS sessions (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "user_id BIGINT, " +
@@ -241,12 +280,28 @@ public class SqlAssistantServer {
                         "started_at TIMESTAMP NOT NULL, " +
                         "duration_seconds INTEGER, " +
                         "page_views INTEGER DEFAULT 0)");
+                    stmt.execute("COMMENT ON TABLE sessions IS 'Sessions de navigation utilisateur'");
+                    stmt.execute("COMMENT ON COLUMN sessions.user_id IS 'Reference vers l utilisateur'");
+                    stmt.execute("COMMENT ON COLUMN sessions.ip_address IS 'Adresse IP du visiteur'");
+                    stmt.execute("COMMENT ON COLUMN sessions.browser IS 'Navigateur utilise'");
+                    stmt.execute("COMMENT ON COLUMN sessions.os IS 'Systeme d exploitation'");
+                    stmt.execute("COMMENT ON COLUMN sessions.country IS 'Code pays ISO 2 lettres'");
+                    stmt.execute("COMMENT ON COLUMN sessions.started_at IS 'Debut de la session'");
+                    stmt.execute("COMMENT ON COLUMN sessions.duration_seconds IS 'Duree de la session en secondes'");
+                    stmt.execute("COMMENT ON COLUMN sessions.page_views IS 'Nombre de pages vues'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS metrics (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "metric_name VARCHAR(100) NOT NULL, " +
                         "metric_value DECIMAL(12,2) NOT NULL, " +
                         "recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
                         "dimension VARCHAR(255))");
+                    stmt.execute("COMMENT ON TABLE metrics IS 'Metriques de performance enregistrees'");
+                    stmt.execute("COMMENT ON COLUMN metrics.metric_name IS 'Nom de la metrique'");
+                    stmt.execute("COMMENT ON COLUMN metrics.metric_value IS 'Valeur de la metrique'");
+                    stmt.execute("COMMENT ON COLUMN metrics.recorded_at IS 'Date d enregistrement'");
+                    stmt.execute("COMMENT ON COLUMN metrics.dimension IS 'Dimension ou categorie de la metrique'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS page_views (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "url VARCHAR(1024) NOT NULL, " +
@@ -255,6 +310,14 @@ public class SqlAssistantServer {
                         "unique_views INTEGER DEFAULT 0, " +
                         "avg_time_seconds DECIMAL(8,2), " +
                         "bounce_rate DECIMAL(5,4))");
+                    stmt.execute("COMMENT ON TABLE page_views IS 'Statistiques de vues par page'");
+                    stmt.execute("COMMENT ON COLUMN page_views.url IS 'URL de la page'");
+                    stmt.execute("COMMENT ON COLUMN page_views.title IS 'Titre de la page'");
+                    stmt.execute("COMMENT ON COLUMN page_views.views IS 'Nombre total de vues'");
+                    stmt.execute("COMMENT ON COLUMN page_views.unique_views IS 'Nombre de vues uniques'");
+                    stmt.execute("COMMENT ON COLUMN page_views.avg_time_seconds IS 'Temps moyen passe sur la page'");
+                    stmt.execute("COMMENT ON COLUMN page_views.bounce_rate IS 'Taux de rebond'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS conversions (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "funnel_name VARCHAR(100) NOT NULL, " +
@@ -263,6 +326,13 @@ public class SqlAssistantServer {
                         "count INTEGER DEFAULT 0, " +
                         "conversion_rate DECIMAL(5,4), " +
                         "recorded_date DATE NOT NULL)");
+                    stmt.execute("COMMENT ON TABLE conversions IS 'Entonnoirs de conversion'");
+                    stmt.execute("COMMENT ON COLUMN conversions.funnel_name IS 'Nom de l entonnoir'");
+                    stmt.execute("COMMENT ON COLUMN conversions.step_name IS 'Nom de l etape'");
+                    stmt.execute("COMMENT ON COLUMN conversions.step_order IS 'Ordre de l etape'");
+                    stmt.execute("COMMENT ON COLUMN conversions.count IS 'Nombre de conversions'");
+                    stmt.execute("COMMENT ON COLUMN conversions.conversion_rate IS 'Taux de conversion'");
+                    stmt.execute("COMMENT ON COLUMN conversions.recorded_date IS 'Date d enregistrement'");
                     break;
 
                 case "RH":
@@ -277,12 +347,29 @@ public class SqlAssistantServer {
                         "salary DECIMAL(10,2), " +
                         "manager_id BIGINT, " +
                         "active BOOLEAN DEFAULT TRUE)");
+                    stmt.execute("COMMENT ON TABLE employees IS 'Employes de l entreprise'");
+                    stmt.execute("COMMENT ON COLUMN employees.first_name IS 'Prenom de l employe'");
+                    stmt.execute("COMMENT ON COLUMN employees.last_name IS 'Nom de famille de l employe'");
+                    stmt.execute("COMMENT ON COLUMN employees.email IS 'Adresse email professionnelle'");
+                    stmt.execute("COMMENT ON COLUMN employees.department_id IS 'Reference vers le departement'");
+                    stmt.execute("COMMENT ON COLUMN employees.position IS 'Poste occupe'");
+                    stmt.execute("COMMENT ON COLUMN employees.hire_date IS 'Date d embauche'");
+                    stmt.execute("COMMENT ON COLUMN employees.salary IS 'Salaire actuel'");
+                    stmt.execute("COMMENT ON COLUMN employees.manager_id IS 'Reference vers le manager'");
+                    stmt.execute("COMMENT ON COLUMN employees.active IS 'Employe actif dans l entreprise'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS departments (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "name VARCHAR(100) NOT NULL, " +
                         "budget DECIMAL(12,2), " +
                         "location VARCHAR(100), " +
                         "head_id BIGINT)");
+                    stmt.execute("COMMENT ON TABLE departments IS 'Departements de l entreprise'");
+                    stmt.execute("COMMENT ON COLUMN departments.name IS 'Nom du departement'");
+                    stmt.execute("COMMENT ON COLUMN departments.budget IS 'Budget annuel du departement'");
+                    stmt.execute("COMMENT ON COLUMN departments.location IS 'Localisation du departement'");
+                    stmt.execute("COMMENT ON COLUMN departments.head_id IS 'Reference vers le responsable'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS salaries (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "employee_id BIGINT NOT NULL, " +
@@ -290,6 +377,13 @@ public class SqlAssistantServer {
                         "effective_date DATE NOT NULL, " +
                         "change_type VARCHAR(20) NOT NULL, " +
                         "approved_by BIGINT)");
+                    stmt.execute("COMMENT ON TABLE salaries IS 'Historique des salaires'");
+                    stmt.execute("COMMENT ON COLUMN salaries.employee_id IS 'Reference vers l employe'");
+                    stmt.execute("COMMENT ON COLUMN salaries.amount IS 'Montant du salaire'");
+                    stmt.execute("COMMENT ON COLUMN salaries.effective_date IS 'Date d effet du salaire'");
+                    stmt.execute("COMMENT ON COLUMN salaries.change_type IS 'Type de changement (raise, promotion, adjustment)'");
+                    stmt.execute("COMMENT ON COLUMN salaries.approved_by IS 'Reference vers l approbateur'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS leave_requests (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "employee_id BIGINT NOT NULL, " +
@@ -299,6 +393,15 @@ public class SqlAssistantServer {
                         "status VARCHAR(20) DEFAULT 'pending', " +
                         "approved_by BIGINT, " +
                         "reason TEXT)");
+                    stmt.execute("COMMENT ON TABLE leave_requests IS 'Demandes de conge'");
+                    stmt.execute("COMMENT ON COLUMN leave_requests.employee_id IS 'Reference vers l employe'");
+                    stmt.execute("COMMENT ON COLUMN leave_requests.leave_type IS 'Type de conge (vacation, sick, personal)'");
+                    stmt.execute("COMMENT ON COLUMN leave_requests.start_date IS 'Date de debut du conge'");
+                    stmt.execute("COMMENT ON COLUMN leave_requests.end_date IS 'Date de fin du conge'");
+                    stmt.execute("COMMENT ON COLUMN leave_requests.status IS 'Statut de la demande (pending, approved, rejected)'");
+                    stmt.execute("COMMENT ON COLUMN leave_requests.approved_by IS 'Reference vers l approbateur'");
+                    stmt.execute("COMMENT ON COLUMN leave_requests.reason IS 'Raison du conge'");
+
                     stmt.execute("CREATE TABLE IF NOT EXISTS performance_reviews (" +
                         "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
                         "employee_id BIGINT NOT NULL, " +
@@ -307,6 +410,13 @@ public class SqlAssistantServer {
                         "score DECIMAL(3,1), " +
                         "comments TEXT, " +
                         "review_date DATE NOT NULL)");
+                    stmt.execute("COMMENT ON TABLE performance_reviews IS 'Evaluations de performance'");
+                    stmt.execute("COMMENT ON COLUMN performance_reviews.employee_id IS 'Reference vers l employe evalue'");
+                    stmt.execute("COMMENT ON COLUMN performance_reviews.reviewer_id IS 'Reference vers l evaluateur'");
+                    stmt.execute("COMMENT ON COLUMN performance_reviews.period IS 'Periode d evaluation (Q1, Q2, Q3, Q4, annual)'");
+                    stmt.execute("COMMENT ON COLUMN performance_reviews.score IS 'Note sur 10'");
+                    stmt.execute("COMMENT ON COLUMN performance_reviews.comments IS 'Commentaires de l evaluation'");
+                    stmt.execute("COMMENT ON COLUMN performance_reviews.review_date IS 'Date de l evaluation'");
                     break;
             }
             stmt.close();
@@ -411,11 +521,11 @@ public class SqlAssistantServer {
     // SCHEMA DATA CLASSES
     // ═══════════════════════════════════════════════════════════
 
-    record ColumnDef(String name, String type, boolean pk, boolean nullable) {}
-    record TableSchema(String tableName, List<ColumnDef> columns, List<String> indexes) {}
+    record ColumnDef(String name, String type, boolean pk, boolean nullable, String comment) {}
+    record TableSchema(String tableName, List<ColumnDef> columns, List<String> indexes, String comment) {}
 
     // ═══════════════════════════════════════════════════════════
-    // ENGINE — Ensemble Resolver + SQL Generator
+    // ENGINE — Ensemble Resolver + SQL Generator + SQL Templates
     // ═══════════════════════════════════════════════════════════
 
     static class SqlEngine {
@@ -431,18 +541,22 @@ public class SqlAssistantServer {
         private final List<QueryHistory> history = Collections.synchronizedList(new ArrayList<>());
         private final List<PatternEntry> patterns = Collections.synchronizedList(new ArrayList<>());
 
+        private final SqlTemplates sqlTemplates = new SqlTemplates();
+
         SqlEngine() {
             strategyWeights.put("intent_graph", 1.0);
             strategyWeights.put("lsh_multi_probe", 0.9);
             strategyWeights.put("syntactic_parser", 1.2);
             strategyWeights.put("thesaurus_hash", 0.8);
             strategyWeights.put("regex_rules", 0.6);
+            strategyWeights.put("template_match", 1.5);
 
             strategyAccuracy.put("intent_graph", 0.88);
             strategyAccuracy.put("lsh_multi_probe", 0.82);
             strategyAccuracy.put("syntactic_parser", 0.92);
             strategyAccuracy.put("thesaurus_hash", 0.78);
             strategyAccuracy.put("regex_rules", 0.70);
+            strategyAccuracy.put("template_match", 0.95);
         }
 
         record Vote(String strategy, String intentType, double rawConfidence, double weightedScore) {}
@@ -456,6 +570,7 @@ public class SqlAssistantServer {
             votes.add(resolveWithSyntax(q));
             votes.add(resolveWithThesaurus(q));
             votes.add(resolveWithRegex(q));
+            votes.add(resolveWithTemplates(q, schema));
 
             // Aggregate
             Map<String, Double> scores = new LinkedHashMap<>();
@@ -589,13 +704,27 @@ public class SqlAssistantServer {
             return new Vote("regex_rules", intent, conf, conf * strategyWeights.get("regex_rules"));
         }
 
+        private Vote resolveWithTemplates(String q, Map<String, TableSchema> schema) {
+            SqlTemplates.TemplateMatch match = sqlTemplates.findBestMatch(q, schema);
+            if (match != null) {
+                return new Vote("template_match", match.template.intent, match.score, match.score * strategyWeights.get("template_match"));
+            }
+            return new Vote("template_match", "Unknown", 0.1, 0.1 * strategyWeights.get("template_match"));
+        }
+
         private boolean match(String q, String regex) {
             return Pattern.compile("\\b(" + regex + ")\\b").matcher(q).find();
         }
 
-        // ── SQL Generator (schema-aware) ──
+        // ── SQL Generator (schema-aware, template-first) ──
 
         String generateSQL(String query, String intent, Map<String, TableSchema> schema) {
+            // Try template match first
+            SqlTemplates.TemplateMatch templateMatch = sqlTemplates.findBestMatch(query.toLowerCase(), schema);
+            if (templateMatch != null && templateMatch.score > 0.5) {
+                return templateMatch.sql.endsWith(";") ? templateMatch.sql : templateMatch.sql + ";";
+            }
+
             String q = query.toLowerCase();
             switch (intent) {
                 case "Select": {
@@ -916,6 +1045,196 @@ public class SqlAssistantServer {
                 }).collect(Collectors.toList());
             }
         }
+
+        List<Map<String, Object>> getTemplateList() {
+            return sqlTemplates.getTemplateList();
+        }
+
+        // ═══════════════════════════════════════════════════════════
+        // SQL TEMPLATES — Template-based SQL generation
+        // ═══════════════════════════════════════════════════════════
+
+        static class SqlTemplates {
+            record SqlTemplate(String pattern, String intent, String sqlTemplate, String description) {}
+
+            private static final List<SqlTemplate> TEMPLATES = List.of(
+                // SELECT templates
+                new SqlTemplate("affiche.*utilisateurs|montre.*utilisateurs|liste.*utilisateurs", "Select",
+                    "SELECT {{columns}} FROM {{table}} WHERE active = TRUE", "Utilisateurs actifs"),
+                new SqlTemplate("tous les produits|affiche.*produits|liste.*produits", "Select",
+                    "SELECT {{columns}} FROM {{table}}", "Tous les produits"),
+                new SqlTemplate("commandes.*recentes|dernieres commandes", "Select",
+                    "SELECT {{columns}} FROM {{table}} ORDER BY order_date DESC", "Commandes recentes"),
+                new SqlTemplate("commandes.*statut|commandes.*status", "Select",
+                    "SELECT {{columns}} FROM {{table}} WHERE status = :status", "Commandes par statut"),
+                new SqlTemplate("employes.*departement|employes.*service", "Select",
+                    "SELECT e.*, d.name AS department_name FROM {{table}} e JOIN departments d ON e.department_id = d.id", "Employes avec departement"),
+                new SqlTemplate("sessions.*navigateur|sessions.*browser", "Select",
+                    "SELECT browser, COUNT(*) AS session_count FROM {{table}} GROUP BY browser ORDER BY session_count DESC", "Sessions par navigateur"),
+                new SqlTemplate("evenements.*type|events.*type", "Select",
+                    "SELECT event_type, COUNT(*) AS event_count FROM {{table}} GROUP BY event_type ORDER BY event_count DESC", "Evenements par type"),
+                new SqlTemplate("conges.*en.*attente|leave.*pending", "Select",
+                    "SELECT {{columns}} FROM {{table}} WHERE status = 'pending'", "Conges en attente"),
+
+                // AGGREGATE templates
+                new SqlTemplate("nombre.*utilisateurs|combien.*utilisateurs|count.*users", "Aggregate",
+                    "SELECT COUNT(*) AS total_users FROM {{table}} WHERE active = TRUE", "Nombre d utilisateurs actifs"),
+                new SqlTemplate("nombre.*commandes|combien.*commandes|count.*orders", "Aggregate",
+                    "SELECT COUNT(*) AS total_orders FROM {{table}}", "Nombre de commandes"),
+                new SqlTemplate("chiffre.*affaires|total.*ventes|revenue|ca", "Aggregate",
+                    "SELECT SUM(total_price) AS revenue FROM orders", "Chiffre d affaires total"),
+                new SqlTemplate("prix.*moyen|average.*price|moyenne.*prix", "Aggregate",
+                    "SELECT AVG(price) AS avg_price FROM {{table}}", "Prix moyen des produits"),
+                new SqlTemplate("salaire.*departement|salary.*department", "Aggregate",
+                    "SELECT d.name, AVG(e.salary) AS avg_salary FROM employees e JOIN departments d ON e.department_id = d.id GROUP BY d.name", "Salaire par departement"),
+                new SqlTemplate("salaire.*moyen|average.*salary|moyenne.*salaire", "Aggregate",
+                    "SELECT AVG(salary) AS avg_salary FROM {{table}}", "Salaire moyen"),
+                new SqlTemplate("commandes.*par.*statut|orders.*by.*status", "Aggregate",
+                    "SELECT status, COUNT(*) AS count FROM {{table}} GROUP BY status", "Commandes par statut"),
+                new SqlTemplate("vues.*par.*page|page.*views.*top|pages.*plus.*visitees", "Aggregate",
+                    "SELECT url, SUM(views) AS total_views FROM {{table}} GROUP BY url ORDER BY total_views DESC", "Pages les plus visitees"),
+                new SqlTemplate("taux.*conversion|conversion.*rate", "Aggregate",
+                    "SELECT funnel_name, AVG(conversion_rate) AS avg_conversion FROM {{table}} GROUP BY funnel_name", "Taux de conversion moyen"),
+
+                // JOIN templates
+                new SqlTemplate("commandes.*utilisateurs|orders.*users|commandes.*avec.*user", "Join",
+                    "SELECT o.*, u.username FROM orders o JOIN users u ON o.user_id = u.id", "Commandes avec utilisateurs"),
+                new SqlTemplate("produits.*categories|products.*categories", "Join",
+                    "SELECT p.*, c.name AS category_name FROM products p LEFT JOIN categories c ON p.category = c.name", "Produits avec categories"),
+                new SqlTemplate("employes.*manager|employees.*manager", "Join",
+                    "SELECT e.first_name, e.last_name, m.first_name AS manager_first, m.last_name AS manager_last FROM employees e LEFT JOIN employees m ON e.manager_id = m.id", "Employes avec manager"),
+                new SqlTemplate("employes.*salaires|employees.*salaries", "Join",
+                    "SELECT e.first_name, e.last_name, s.amount, s.effective_date FROM employees e JOIN salaries s ON e.id = s.employee_id", "Employes avec salaires"),
+
+                // INSERT templates
+                new SqlTemplate("ajouter.*utilisateur|creer.*compte|new.*user", "Insert",
+                    "INSERT INTO {{table}} (username, email, active) VALUES (:username, :email, TRUE)", "Nouvel utilisateur"),
+                new SqlTemplate("ajouter.*produit|new.*product|creer.*produit", "Insert",
+                    "INSERT INTO {{table}} (name, description, price, category, stock) VALUES (:name, :description, :price, :category, :stock)", "Nouveau produit"),
+                new SqlTemplate("nouvelle.*commande|creer.*commande|new.*order", "Insert",
+                    "INSERT INTO {{table}} (user_id, product_id, quantity, total_price, status) VALUES (:user_id, :product_id, :quantity, :total_price, 'pending')", "Nouvelle commande"),
+
+                // UPDATE templates
+                new SqlTemplate("desactiver.*utilisateur|deactivate.*user", "Update",
+                    "UPDATE {{table}} SET active = FALSE WHERE id = :id", "Desactiver un utilisateur"),
+                new SqlTemplate("activer.*utilisateur|activate.*user", "Update",
+                    "UPDATE {{table}} SET active = TRUE WHERE id = :id", "Activer un utilisateur"),
+                new SqlTemplate("modifier.*stock|update.*stock", "Update",
+                    "UPDATE {{table}} SET stock = :stock WHERE id = :id", "Modifier le stock"),
+                new SqlTemplate("approuver.*conge|approve.*leave", "Update",
+                    "UPDATE {{table}} SET status = 'approved', approved_by = :approved_by WHERE id = :id", "Approuver un conge"),
+
+                // DELETE templates
+                new SqlTemplate("supprimer.*utilisateur|delete.*user", "Delete",
+                    "DELETE FROM {{table}} WHERE id = :id", "Supprimer un utilisateur"),
+                new SqlTemplate("supprimer.*produit|delete.*product", "Delete",
+                    "DELETE FROM {{table}} WHERE id = :id", "Supprimer un produit")
+            );
+
+            /** Find the best matching template for a query */
+            TemplateMatch findBestMatch(String query, Map<String, TableSchema> schema) {
+                String q = query.toLowerCase().trim();
+                TemplateMatch bestMatch = null;
+                double bestScore = 0;
+
+                for (SqlTemplate t : TEMPLATES) {
+                    if (Pattern.compile(t.pattern).matcher(q).find()) {
+                        double score = computeScore(q, t);
+                        if (score > bestScore) {
+                            bestScore = score;
+                            String table = resolveTableForTemplate(q, t, schema);
+                            String columns = resolveColumnsForTemplate(table, schema);
+                            String sql = t.sqlTemplate
+                                .replace("{{table}}", table)
+                                .replace("{{columns}}", columns);
+                            bestMatch = new TemplateMatch(t, sql, table, score);
+                        }
+                    }
+                }
+                return bestMatch;
+            }
+
+            private double computeScore(String q, SqlTemplate t) {
+                double score = 0.75; // Base score for any template regex match
+                // Higher score for more keyword matches within the pattern alternatives
+                // Also prefer more specific (longer) patterns
+                String[] alternatives = t.pattern.split("\\|");
+                double bestAltScore = 0;
+                for (String alt : alternatives) {
+                    String[] parts = alt.replace(".*", " ").replace("\\b", " ").trim().split("\\s+");
+                    int matchCount = 0;
+                    int totalLen = 0;
+                    for (String part : parts) {
+                        totalLen += part.length();
+                        if (part.length() > 2 && q.contains(part.toLowerCase())) matchCount++;
+                    }
+                    double altScore = 0.05 * matchCount + 0.001 * totalLen; // Bonus for longer/more specific patterns
+                    if (altScore > bestAltScore) bestAltScore = altScore;
+                }
+                score += bestAltScore;
+                return Math.min(score, 0.98);
+            }
+
+            private String resolveTableForTemplate(String q, SqlTemplate t, Map<String, TableSchema> schema) {
+                // Try to find the table based on intent + query keywords
+                for (Map.Entry<String, TableSchema> e : schema.entrySet()) {
+                    String tbl = e.getKey();
+                    if (q.contains(tbl) || q.contains(tbl.endsWith("s") ? tbl.substring(0, tbl.length()-1) : tbl)) {
+                        return e.getValue().tableName;
+                    }
+                }
+                // Default table based on common keywords (order matters - most specific first)
+                if (q.contains("utilisat") || q.contains("user") || q.contains("compte")) return findTbl(schema, "users");
+                if (q.contains("produit") || q.contains("product")) return findTbl(schema, "products");
+                if (q.contains("command") || q.contains("order") || q.contains("affaire") || q.contains("vente") || q.contains("ventes") || q.contains("chiffre")) return findTbl(schema, "orders");
+                if (q.contains("salar") || q.contains("salaire")) return findTbl(schema, "salaries");
+                if (q.contains("employ") || q.contains("personnel")) return findTbl(schema, "employees");
+                if (q.contains("depart") || q.contains("service")) return findTbl(schema, "departments");
+                if (q.contains("conge") || q.contains("leave")) return findTbl(schema, "leave_requests");
+                if (q.contains("perform") || q.contains("evaluation")) return findTbl(schema, "performance_reviews");
+                if (q.contains("session")) return findTbl(schema, "sessions");
+                if (q.contains("evenement") || q.contains("event")) return findTbl(schema, "events");
+                if (q.contains("page") || q.contains("vue")) return findTbl(schema, "page_views");
+                if (q.contains("conversion") || q.contains("entonnoir") || q.contains("funnel")) return findTbl(schema, "conversions");
+                if (q.contains("metrique") || q.contains("metric")) return findTbl(schema, "metrics");
+                if (q.contains("categori")) return findTbl(schema, "categories");
+                // Fallback
+                return schema.values().iterator().next().tableName;
+            }
+
+            private String findTbl(Map<String, TableSchema> schema, String prefix) {
+                for (String name : schema.keySet()) {
+                    if (name.toLowerCase().startsWith(prefix)) return schema.get(name).tableName;
+                }
+                return schema.values().iterator().next().tableName;
+            }
+
+            private String resolveColumnsForTemplate(String tableName, Map<String, TableSchema> schema) {
+                for (TableSchema ts : schema.values()) {
+                    if (ts.tableName.equalsIgnoreCase(tableName)) {
+                        return ts.columns.stream()
+                            .filter(c -> !c.pk)
+                            .map(c -> c.name)
+                            .limit(8)
+                            .collect(Collectors.joining(", "));
+                    }
+                }
+                return "*";
+            }
+
+            /** Get all available templates as a list for the client */
+            List<Map<String, Object>> getTemplateList() {
+                return TEMPLATES.stream().map(t -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("pattern", t.pattern);
+                    m.put("intent", t.intent);
+                    m.put("description", t.description);
+                    return m;
+                }).collect(Collectors.toList());
+            }
+
+            record TemplateMatch(SqlTemplate template, String sql, String resolvedTable, double score) {}
+        }
     }
 
     static class QueryHistory {
@@ -1127,11 +1446,10 @@ public class SqlAssistantServer {
                 } else {
                     response.put("error", qr.error);
                 }
-
                 sendJson(exchange, response);
             } catch (Exception e) {
                 e.printStackTrace();
-                try { sendJson(exchange, Map.of("success", false, "error", e.getMessage()), 500); }
+                try { sendJson(exchange, Map.of("error", e.getMessage()), 500); }
                 catch (Exception ignored) {}
             }
         }
@@ -1163,10 +1481,12 @@ public class SqlAssistantServer {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("name", c.name); m.put("type", c.type);
                     m.put("pk", c.pk); m.put("nullable", c.nullable);
+                    m.put("comment", c.comment);
                     return m;
                 }).collect(Collectors.toList());
                 tableMap.put("columns", cols);
                 tableMap.put("indexes", e.getValue().indexes);
+                tableMap.put("comment", e.getValue().comment);
                 tablesMap.put(e.getKey(), tableMap);
             }
             result.put("tables", tablesMap);
@@ -1230,91 +1550,17 @@ public class SqlAssistantServer {
         }
     }
 
-    static class ApiLLMStatusHandler implements HttpHandler {
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            try {
-                if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                    sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
-                }
-                sendJson(exchange, llmAdapter.getStatus());
-            } catch (Exception e) {
-                sendJson(exchange, Map.of("error", e.getMessage()), 500);
-            }
-        }
-    }
-
-    static class ApiLLMGenerateHandler implements HttpHandler {
-        private final DatabaseManager dbMgr;
-        ApiLLMGenerateHandler(DatabaseManager dbMgr) { this.dbMgr = dbMgr; }
+    static class ApiTemplatesHandler implements HttpHandler {
+        private final SqlEngine engine;
+        ApiTemplatesHandler(SqlEngine engine) { this.engine = engine; }
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
-            try {
-                if (!"POST".equals(exchange.getRequestMethod()) && !"OPTIONS".equals(exchange.getRequestMethod())) {
-                    exchange.sendResponseHeaders(405, -1); return;
-                }
-                if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                    sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
-                }
-                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-                String query = extractJsonString(body, "query");
-                String dbName = extractJsonString(body, "database");
-                if (dbName == null || dbName.isEmpty()) dbName = dbMgr.getDatabaseList().get(0).get("name").toString();
-
-                Map<String, TableSchema> schema = dbMgr.getSchema(dbName);
-                String schemaContext = buildSchemaContext(dbName, schema);
-
-                LLMAdapter.LLMSQLResult result = llmAdapter.generateSQL(query, schemaContext, dbName);
-
-                Map<String, Object> response = new LinkedHashMap<>();
-                response.put("sql", result.sql());
-                response.put("explanation", result.explanation());
-                response.put("confidence", result.confidence());
-                response.put("llmUsed", result.llmUsed());
-                response.put("meta", result.meta());
-                response.put("database", dbName);
-                sendJson(exchange, response);
-            } catch (Exception e) {
-                e.printStackTrace();
-                sendJson(exchange, Map.of("error", e.getMessage()), 500);
+            if ("OPTIONS".equals(exchange.getRequestMethod())) {
+                sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
             }
-        }
-    }
-
-    static class ApiLLMExplainHandler implements HttpHandler {
-        private final DatabaseManager dbMgr;
-        ApiLLMExplainHandler(DatabaseManager dbMgr) { this.dbMgr = dbMgr; }
-
-        @Override
-        public void handle(HttpExchange exchange) throws IOException {
-            try {
-                if (!"POST".equals(exchange.getRequestMethod()) && !"OPTIONS".equals(exchange.getRequestMethod())) {
-                    exchange.sendResponseHeaders(405, -1); return;
-                }
-                if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                    sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
-                }
-                String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
-                String sql = extractJsonString(body, "sql");
-                String dbName = extractJsonString(body, "database");
-                if (dbName == null || dbName.isEmpty()) dbName = dbMgr.getDatabaseList().get(0).get("name").toString();
-
-                Map<String, TableSchema> schema = dbMgr.getSchema(dbName);
-                String schemaContext = buildSchemaContext(dbName, schema);
-
-                String explanation = llmAdapter.explainSQL(sql, schemaContext);
-
-                Map<String, Object> response = new LinkedHashMap<>();
-                response.put("explanation", explanation);
-                response.put("sql", sql);
-                response.put("database", dbName);
-                response.put("llmUsed", llmAdapter.isAvailable());
-                sendJson(exchange, response);
-            } catch (Exception e) {
-                e.printStackTrace();
-                sendJson(exchange, Map.of("error", e.getMessage()), 500);
-            }
+            List<Map<String, Object>> templates = engine.getTemplateList();
+            sendJson(exchange, Map.of("templates", templates));
         }
     }
 
@@ -1417,28 +1663,6 @@ public class SqlAssistantServer {
     }
 
     // ═══════════════════════════════════════════════════════════
-    // LLM SCHEMA CONTEXT BUILDER
-    // ═══════════════════════════════════════════════════════════
-
-    static String buildSchemaContext(String dbName, Map<String, TableSchema> schema) {
-        StringBuilder sb = new StringBuilder();
-        sb.append("Database: ").append(dbName).append("\n\n");
-        for (var entry : schema.entrySet()) {
-            TableSchema ts = entry.getValue();
-            sb.append("Table: ").append(ts.tableName()).append("\n");
-            sb.append("Columns:\n");
-            for (ColumnDef col : ts.columns()) {
-                sb.append("  - ").append(col.name()).append(" ").append(col.type());
-                if (col.pk()) sb.append(" PRIMARY KEY");
-                if (!col.nullable()) sb.append(" NOT NULL");
-                sb.append("\n");
-            }
-            sb.append("\n");
-        }
-        return sb.toString();
-    }
-
-    // ═══════════════════════════════════════════════════════════
     // MAIN
     // ═══════════════════════════════════════════════════════════
 
@@ -1446,11 +1670,10 @@ public class SqlAssistantServer {
         int port = args.length > 0 ? Integer.parseInt(args[0]) : 8080;
         String clientDir = args.length > 1 ? args[1] : "client";
         String configFile = args.length > 2 ? args[2] : "databases.json";
-        String llmConfigPath = args.length > 3 ? args[3] : "llm-config.json";
 
         System.out.println("============================================================");
-        System.out.println("  Enterprise SQL Assistant V4 — JDK HttpServer + Multi-DB + LLM");
-        System.out.println("  Pure Java 21 + com.sun.net.httpserver + JDBC + Qwen35");
+        System.out.println("  Enterprise SQL Assistant V4 — JDK HttpServer + Multi-DB + SQL Templates");
+        System.out.println("  Pure Java 21 + com.sun.net.httpserver + JDBC");
         System.out.println("============================================================");
         System.out.println();
 
@@ -1463,18 +1686,6 @@ public class SqlAssistantServer {
         dbMgr.connectAll();
 
         SqlEngine engine = new SqlEngine();
-
-        // Initialize LLM Adapter (Qwen35.java)
-        System.out.println("\n[LLM] Initializing Qwen35 local LLM...");
-        LLMAdapter.LLMConfig llmConfig = LLMAdapter.LLMConfig.fromFile(llmConfigPath);
-        llmAdapter = new LLMAdapter(llmConfig);
-        if (llmConfig.enabled && !llmConfig.modelPath.isEmpty()) {
-            llmAdapter.loadModelAsync(); // Load in background
-        } else {
-            System.out.println("  [LLM] Disabled or no model path configured");
-            System.out.println("  [LLM] To enable: create llm-config.json with modelPath");
-            System.out.println("  [LLM] Download a GGUF model from https://huggingface.co/unsloth/Qwen3.5-0.8B-GGUF");
-        }
 
         HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
 
@@ -1491,9 +1702,7 @@ public class SqlAssistantServer {
         server.createContext("/api/strategies", new ApiStrategiesHandler(engine));
         server.createContext("/api/patterns", new ApiPatternsHandler(engine));
         server.createContext("/api/feedback", new ApiFeedbackHandler(engine));
-        server.createContext("/api/llm", new ApiLLMStatusHandler());
-        server.createContext("/api/llm/generate", new ApiLLMGenerateHandler(dbMgr));
-        server.createContext("/api/llm/explain", new ApiLLMExplainHandler(dbMgr));
+        server.createContext("/api/templates", new ApiTemplatesHandler(engine));
 
         server.setExecutor(java.util.concurrent.Executors.newFixedThreadPool(8));
 
@@ -1511,9 +1720,7 @@ public class SqlAssistantServer {
         System.out.println("    GET  /api/strategies  -> Strategy weights & accuracy");
         System.out.println("    GET  /api/patterns    -> Mined query patterns");
         System.out.println("    POST /api/feedback    -> Submit feedback");
-        System.out.println("    GET  /api/llm         -> LLM status");
-        System.out.println("    POST /api/llm/generate -> Generate SQL with LLM");
-        System.out.println("    POST /api/llm/explain -> Explain SQL with LLM");
+        System.out.println("    GET  /api/templates   -> Available SQL templates");
         System.out.println();
         System.out.println("  Client dir: " + clientPath);
         System.out.println("  Config:     " + Paths.get(configFile).toAbsolutePath());
