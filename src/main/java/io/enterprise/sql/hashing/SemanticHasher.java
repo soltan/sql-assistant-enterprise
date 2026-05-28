@@ -3,6 +3,7 @@ package io.enterprise.sql.hashing;
 import io.enterprise.sql.model.SemanticHash;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Semantic hasher that combines SimHash with intent-specific fingerprinting.

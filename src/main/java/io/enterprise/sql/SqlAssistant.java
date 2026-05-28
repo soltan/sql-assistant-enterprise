@@ -149,7 +149,7 @@ public class SqlAssistant {
                     long elapsed = (System.nanoTime() - start) / 1000; // microseconds
 
                     System.out.println("\n┌─ Intent: " + formatIntent(response.intent()));
-                    System.out.println("├─ Confidence: " + String.format("%.2f%%", response.confidence() * 100));
+                    //System.out.println("├─ Confidence: " + String.format("%.2f%%", response.confidence() * 100));
                     System.out.println("├─ Latency: " + elapsed + " μs");
                     System.out.println("├─ Valid: " + (response.valid() ? "✓" : "✗ " + response.validationMessage()));
                     System.out.println("└─ SQL:");
@@ -270,7 +270,7 @@ public class SqlAssistant {
         result.put("sql", response.query().sql());
         result.put("parameters", response.query().parameters());
         result.put("intent", formatIntent(response.intent()));
-        result.put("confidence", response.confidence());
+        //result.put("confidence", response.confidence());
         result.put("valid", response.valid());
         result.put("latencyMicros", response.latencyNanos() / 1000);
         return result;

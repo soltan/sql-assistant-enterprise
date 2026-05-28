@@ -106,11 +106,11 @@ public class JakartaAIAdapter {
 
             // Step 2: REASON — resolve intent (potentially concurrent)
             SqlIntent intent;
-            try (var scope = new StructuredTaskScope.ShutdownOnFailure()) {
+            try (var scope = StructuredTaskScope.open(StructuredTaskScope.Joiner.allSuccessfulOrThrow())) {
                 StructuredTaskScope.Subtask<SqlIntent> intentTask =
                     scope.fork(() -> reason(normalizedQuery));
                 scope.join();
-                scope.throwIfFailed();
+                //scope.throwIfFailed();
                 intent = intentTask.get();
             } catch (Exception e) {
                 intent = new SqlIntent.Unknown(normalizedQuery, 0.0,

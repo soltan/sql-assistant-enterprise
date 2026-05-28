@@ -59,14 +59,14 @@ public final class AssistantConfig {
      * The config is available via AssistantConfig.CURRENT.get() within the runnable.
      */
     public void runWith(Runnable task) {
-        ScopedValue.runWhere(CURRENT, this, task);
+        ScopedValue.where(CURRENT, this).run(task);
     }
 
     /**
      * Call a supplier with this configuration bound as the current context.
      */
-    public <T> T callWith(java.util.function.Supplier<T> supplier) {
-        return ScopedValue.getWhere(CURRENT, this, supplier);
+    public <T> T callWith(ScopedValue.CallableOp<T, RuntimeException> supplier) {
+        return ScopedValue.where(CURRENT, this).call(supplier);
     }
 
     /**

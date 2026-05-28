@@ -1,8 +1,10 @@
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpHandler;
-import com.sun.net.httpserver.HttpExchange;
+package io.enterprise.sql;
 
-import java.io.*;
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpHandler;
+import com.sun.net.httpserver.HttpServer;
+
+import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -54,10 +56,15 @@ public class SqlAssistantServer {
 
     static class DatabaseConfig {
         String name, description, driver, url, user, password;
+
         DatabaseConfig(String name, String description, String driver,
                        String url, String user, String password) {
-            this.name = name; this.description = description; this.driver = driver;
-            this.url = url; this.user = user; this.password = password;
+            this.name = name;
+            this.description = description;
+            this.driver = driver;
+            this.url = url;
+            this.user = user;
+            this.password = password;
         }
     }
 
@@ -72,12 +79,12 @@ public class SqlAssistantServer {
             List<Map<String, String>> entries = parseJsonArrayOfObjects(json);
             for (Map<String, String> e : entries) {
                 DatabaseConfig cfg = new DatabaseConfig(
-                    e.getOrDefault("name", "unknown"),
-                    e.getOrDefault("description", ""),
-                    e.getOrDefault("driver", "org.h2.Driver"),
-                    e.getOrDefault("url", ""),
-                    e.getOrDefault("user", "sa"),
-                    e.getOrDefault("password", "")
+                        e.get("name"),
+                        e.get("description"),
+                        e.get("driver"),
+                        e.get("url"),
+                        e.get("user"),
+                        e.get("password")
                 );
                 configs.put(cfg.name, cfg);
             }
@@ -92,11 +99,8 @@ public class SqlAssistantServer {
                     connections.put(cfg.name, conn);
                     System.out.println("  [OK] Connected to: " + cfg.name + " (" + cfg.url + ")");
 
-                    // Create table structures (no sample data)
-                    createTables(cfg.name, conn);
-
                     // Discover schema dynamically
-                    Map<String, TableSchema> dbSchema = discoverSchema(conn);
+                    Map<String, TableSchema> dbSchema = discoverSchema(conn, cfg.name);
                     schemas.put(cfg.name, dbSchema);
                     System.out.println("       Discovered " + dbSchema.size() + " tables");
                 } catch (Exception ex) {
@@ -105,24 +109,22 @@ public class SqlAssistantServer {
             }
         }
 
-        private Map<String, TableSchema> discoverSchema(Connection conn) throws SQLException {
+        private Map<String, TableSchema> discoverSchema(Connection conn, String schema) throws SQLException {
             Map<String, TableSchema> result = new LinkedHashMap<>();
             DatabaseMetaData meta = conn.getMetaData();
-
             // Get all tables (filter out H2 system tables)
-            String[] schemas = {"PUBLIC", "public"};
-            try (ResultSet tables = meta.getTables(null, "PUBLIC", "%", new String[]{"TABLE"})) {
+            try (ResultSet tables = meta.getTables(schema, null, "%", new String[]{"TABLE"})) {
                 while (tables.next()) {
                     String tableName = tables.getString("TABLE_NAME");
                     // Skip H2 system tables
                     if (tableName.startsWith("INFORMATION_SCHEMA") || tableName.startsWith("SYSTEM_")
-                        || tableName.equals("DATABASECHANGELOG") || tableName.equals("DATABASECHANGELOGLOCK"))
+                            || tableName.equals("DATABASECHANGELOG") || tableName.equals("DATABASECHANGELOGLOCK"))
                         continue;
                     List<ColumnDef> columns = new ArrayList<>();
                     List<String> indexes = new ArrayList<>();
 
                     // Get columns
-                    try (ResultSet cols = meta.getColumns(null, null, tableName, "%")) {
+                    try (ResultSet cols = meta.getColumns(null, schema, tableName, "%")) {
                         while (cols.next()) {
                             String colName = cols.getString("COLUMN_NAME");
                             String colType = cols.getString("TYPE_NAME");
@@ -133,16 +135,16 @@ public class SqlAssistantServer {
                             // Format type with size
                             String typeStr = colType;
                             if (colSize > 0 && !"TEXT".equalsIgnoreCase(colType)
-                                && !"CLOB".equalsIgnoreCase(colType)
-                                && !"BLOB".equalsIgnoreCase(colType)
-                                && !"BOOLEAN".equalsIgnoreCase(colType)
-                                && !"DATE".equalsIgnoreCase(colType)
-                                && !"TIMESTAMP".equalsIgnoreCase(colType)) {
+                                    && !"CLOB".equalsIgnoreCase(colType)
+                                    && !"BLOB".equalsIgnoreCase(colType)
+                                    && !"BOOLEAN".equalsIgnoreCase(colType)
+                                    && !"DATE".equalsIgnoreCase(colType)
+                                    && !"TIMESTAMP".equalsIgnoreCase(colType)) {
                                 typeStr = colType + "(" + colSize + ")";
                             }
 
                             columns.add(new ColumnDef(colName, typeStr, false,
-                                "YES".equalsIgnoreCase(nullable)));
+                                    "YES".equalsIgnoreCase(nullable)));
                         }
                     }
 
@@ -155,16 +157,16 @@ public class SqlAssistantServer {
                     }
                     // Mark PK columns
                     List<ColumnDef> updatedCols = columns.stream()
-                        .map(c -> pkCols.contains(c.name)
-                            ? new ColumnDef(c.name, c.type, true, c.nullable) : c)
-                        .collect(Collectors.toList());
+                            .map(c -> pkCols.contains(c.name)
+                                    ? new ColumnDef(c.name, c.type, true, c.nullable) : c)
+                            .collect(Collectors.toList());
 
                     // Get indexes
                     try (ResultSet idx = meta.getIndexInfo(null, null, tableName, false, false)) {
                         while (idx.next()) {
                             String idxName = idx.getString("INDEX_NAME");
                             if (idxName != null && !idxName.startsWith("PK_")
-                                && !idxName.startsWith("PRIMARY_KEY")) {
+                                    && !idxName.startsWith("PRIMARY_KEY")) {
                                 indexes.add(idxName);
                             }
                         }
@@ -175,136 +177,6 @@ public class SqlAssistantServer {
             }
             return result;
         }
-
-        private void createTables(String dbName, Connection conn) throws SQLException {
-            Statement stmt = conn.createStatement();
-            switch (dbName) {
-                case "E-Commerce":
-                    stmt.execute("CREATE TABLE IF NOT EXISTS users (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "username VARCHAR(255) NOT NULL, " +
-                        "email VARCHAR(512) NOT NULL, " +
-                        "created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
-                        "active BOOLEAN DEFAULT TRUE)");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS products (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "name VARCHAR(512) NOT NULL, " +
-                        "description TEXT, " +
-                        "price DECIMAL(10,2) NOT NULL, " +
-                        "category VARCHAR(100), " +
-                        "stock INTEGER NOT NULL DEFAULT 0)");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS orders (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "user_id BIGINT NOT NULL, " +
-                        "product_id BIGINT NOT NULL, " +
-                        "quantity INTEGER NOT NULL, " +
-                        "total_price DECIMAL(10,2) NOT NULL, " +
-                        "order_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
-                        "status VARCHAR(50) DEFAULT 'pending')");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS order_items (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "order_id BIGINT NOT NULL, " +
-                        "product_id BIGINT NOT NULL, " +
-                        "quantity INTEGER NOT NULL, " +
-                        "unit_price DECIMAL(10,2) NOT NULL)");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS categories (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "name VARCHAR(100) NOT NULL, " +
-                        "description TEXT, " +
-                        "parent_id BIGINT)");
-                    break;
-
-                case "Analytics":
-                    stmt.execute("CREATE TABLE IF NOT EXISTS events (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "event_type VARCHAR(100) NOT NULL, " +
-                        "user_id BIGINT, " +
-                        "session_id VARCHAR(255), " +
-                        "page_url VARCHAR(1024), " +
-                        "event_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
-                        "properties TEXT)");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS sessions (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "user_id BIGINT, " +
-                        "ip_address VARCHAR(45), " +
-                        "browser VARCHAR(100), " +
-                        "os VARCHAR(100), " +
-                        "country VARCHAR(2), " +
-                        "started_at TIMESTAMP NOT NULL, " +
-                        "duration_seconds INTEGER, " +
-                        "page_views INTEGER DEFAULT 0)");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS metrics (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "metric_name VARCHAR(100) NOT NULL, " +
-                        "metric_value DECIMAL(12,2) NOT NULL, " +
-                        "recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, " +
-                        "dimension VARCHAR(255))");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS page_views (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "url VARCHAR(1024) NOT NULL, " +
-                        "title VARCHAR(512), " +
-                        "views INTEGER DEFAULT 0, " +
-                        "unique_views INTEGER DEFAULT 0, " +
-                        "avg_time_seconds DECIMAL(8,2), " +
-                        "bounce_rate DECIMAL(5,4))");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS conversions (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "funnel_name VARCHAR(100) NOT NULL, " +
-                        "step_name VARCHAR(100) NOT NULL, " +
-                        "step_order INTEGER NOT NULL, " +
-                        "count INTEGER DEFAULT 0, " +
-                        "conversion_rate DECIMAL(5,4), " +
-                        "recorded_date DATE NOT NULL)");
-                    break;
-
-                case "RH":
-                    stmt.execute("CREATE TABLE IF NOT EXISTS employees (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "first_name VARCHAR(100) NOT NULL, " +
-                        "last_name VARCHAR(100) NOT NULL, " +
-                        "email VARCHAR(255) NOT NULL, " +
-                        "department_id BIGINT, " +
-                        "position VARCHAR(100), " +
-                        "hire_date DATE NOT NULL, " +
-                        "salary DECIMAL(10,2), " +
-                        "manager_id BIGINT, " +
-                        "active BOOLEAN DEFAULT TRUE)");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS departments (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "name VARCHAR(100) NOT NULL, " +
-                        "budget DECIMAL(12,2), " +
-                        "location VARCHAR(100), " +
-                        "head_id BIGINT)");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS salaries (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "employee_id BIGINT NOT NULL, " +
-                        "amount DECIMAL(10,2) NOT NULL, " +
-                        "effective_date DATE NOT NULL, " +
-                        "change_type VARCHAR(20) NOT NULL, " +
-                        "approved_by BIGINT)");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS leave_requests (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "employee_id BIGINT NOT NULL, " +
-                        "leave_type VARCHAR(50) NOT NULL, " +
-                        "start_date DATE NOT NULL, " +
-                        "end_date DATE NOT NULL, " +
-                        "status VARCHAR(20) DEFAULT 'pending', " +
-                        "approved_by BIGINT, " +
-                        "reason TEXT)");
-                    stmt.execute("CREATE TABLE IF NOT EXISTS performance_reviews (" +
-                        "id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY, " +
-                        "employee_id BIGINT NOT NULL, " +
-                        "reviewer_id BIGINT NOT NULL, " +
-                        "period VARCHAR(20) NOT NULL, " +
-                        "score DECIMAL(3,1), " +
-                        "comments TEXT, " +
-                        "review_date DATE NOT NULL)");
-                    break;
-            }
-            stmt.close();
-        }
-
-
 
         Map<String, TableSchema> getSchema(String dbName) {
             return schemas.getOrDefault(dbName, new LinkedHashMap<>());
@@ -351,8 +223,8 @@ public class SqlAssistantServer {
                     // Column info
                     for (int i = 1; i <= colCount; i++) {
                         result.columns.add(new ResultColumn(
-                            meta.getColumnLabel(i),
-                            meta.getColumnTypeName(i)
+                                meta.getColumnLabel(i),
+                                meta.getColumnTypeName(i)
                         ));
                     }
 
@@ -363,7 +235,7 @@ public class SqlAssistantServer {
                         for (int i = 1; i <= colCount; i++) {
                             Object val = rs.getObject(i);
                             row.put(result.columns.get(i - 1).name,
-                                val == null ? null : val.toString());
+                                    val == null ? null : val.toString());
                         }
                         result.rows.add(row);
                         rowCount++;
@@ -396,15 +268,22 @@ public class SqlAssistantServer {
 
     static class ResultColumn {
         String name, type;
-        ResultColumn(String name, String type) { this.name = name; this.type = type; }
+
+        ResultColumn(String name, String type) {
+            this.name = name;
+            this.type = type;
+        }
     }
 
     // ═══════════════════════════════════════════════════════════
     // SCHEMA DATA CLASSES
     // ═══════════════════════════════════════════════════════════
 
-    record ColumnDef(String name, String type, boolean pk, boolean nullable) {}
-    record TableSchema(String tableName, List<ColumnDef> columns, List<String> indexes) {}
+    record ColumnDef(String name, String type, boolean pk, boolean nullable) {
+    }
+
+    record TableSchema(String tableName, List<ColumnDef> columns, List<String> indexes) {
+    }
 
     // ═══════════════════════════════════════════════════════════
     // ENGINE — Ensemble Resolver + SQL Generator
@@ -437,7 +316,8 @@ public class SqlAssistantServer {
             strategyAccuracy.put("regex_rules", 0.70);
         }
 
-        record Vote(String strategy, String intentType, double rawConfidence, double weightedScore) {}
+        record Vote(String strategy, String intentType, double rawConfidence, double weightedScore) {
+        }
 
         EnsembleResult resolveIntent(String query, Map<String, TableSchema> schema) {
             String q = query.toLowerCase();
@@ -458,8 +338,8 @@ public class SqlAssistantServer {
             }
 
             String winner = scores.entrySet().stream()
-                .max(Map.Entry.comparingByValue())
-                .map(Map.Entry::getKey).orElse("Unknown");
+                    .max(Map.Entry.comparingByValue())
+                    .map(Map.Entry::getKey).orElse("Unknown");
             double total = scores.values().stream().mapToDouble(Double::doubleValue).sum();
             double ensembleConf = total > 0 ? scores.get(winner) / total : 0;
             double calibrated = ensembleConf * 0.6 + bestRaw.getOrDefault(winner, 0.5) * 0.4;
@@ -468,114 +348,179 @@ public class SqlAssistantServer {
         }
 
         record EnsembleResult(String intent, double confidence, double ensembleConfidence,
-                               List<Vote> votes, Map<String, Double> scores) {}
+                              List<Vote> votes, Map<String, Double> scores) {
+        }
 
         private Vote resolveWithGraph(String q) {
-            String intent = "Unknown"; double conf = 0.1;
+            String intent = "Unknown";
+            double conf = 0.1;
             if (match(q, "select|show|get|find|list|display|montre|affiche|cherche|liste") &&
-                match(q, "from|de|dans")) { intent = "Select"; conf = 0.85; }
-            else if (match(q, "how many|combien|count|nombre")) { intent = "Aggregate"; conf = 0.80; }
-            else if (match(q, "total|somme|sum")) { intent = "Aggregate"; conf = 0.75; }
-            else if (match(q, "insert|add|ajoute|ajouter|creer un")) { intent = "Insert"; conf = 0.85; }
-            else if (match(q, "update|modify|change|modifie|modifier|mettre a jour")) { intent = "Update"; conf = 0.80; }
-            else if (match(q, "delete|remove|supprime|supprimer|efface")) { intent = "Delete"; conf = 0.85; }
-            else if (match(q, "create table|cre.*table|nouvelle table")) { intent = "CreateTable"; conf = 0.90; }
-            else if (match(q, "alter|modifier.*table")) { intent = "AlterTable"; conf = 0.90; }
-            else if (match(q, "drop|supprimer.*table")) { intent = "DropTable"; conf = 0.90; }
-            else if (match(q, "join|combine|fusionne|joindre|combiner")) { intent = "Join"; conf = 0.70; }
-            else if (match(q, "explain|analyse|explique")) { intent = "Explain"; conf = 0.90; }
-            else if (match(q, "describe|schema|structure|decris|colonnes")) { intent = "SchemaInfo"; conf = 0.80; }
+                    match(q, "from|de|dans")) {
+                intent = "Select";
+                conf = 0.85;
+            } else if (match(q, "how many|combien|count|nombre")) {
+                intent = "Aggregate";
+                conf = 0.80;
+            } else if (match(q, "total|somme|sum")) {
+                intent = "Aggregate";
+                conf = 0.75;
+            } else if (match(q, "insert|add|ajoute|ajouter|creer un")) {
+                intent = "Insert";
+                conf = 0.85;
+            } else if (match(q, "update|modify|change|modifie|modifier|mettre a jour")) {
+                intent = "Update";
+                conf = 0.80;
+            } else if (match(q, "delete|remove|supprime|supprimer|efface")) {
+                intent = "Delete";
+                conf = 0.85;
+            } else if (match(q, "create table|cre.*table|nouvelle table")) {
+                intent = "CreateTable";
+                conf = 0.90;
+            } else if (match(q, "alter|modifier.*table")) {
+                intent = "AlterTable";
+                conf = 0.90;
+            } else if (match(q, "drop|supprimer.*table")) {
+                intent = "DropTable";
+                conf = 0.90;
+            } else if (match(q, "join|combine|fusionne|joindre|combiner")) {
+                intent = "Join";
+                conf = 0.70;
+            } else if (match(q, "explain|analyse|explique")) {
+                intent = "Explain";
+                conf = 0.90;
+            } else if (match(q, "describe|schema|structure|decris|colonnes")) {
+                intent = "SchemaInfo";
+                conf = 0.80;
+            }
             return new Vote("intent_graph", intent, conf, conf * strategyWeights.get("intent_graph"));
         }
 
         private Vote resolveWithLSH(String q) {
-            String intent = "Unknown"; double conf = 0.1;
-            if (match(q, "select|show|get|affiche|montre|liste|cherche")) { intent = "Select"; conf = 0.80; }
-            else if (match(q, "count|combien|nombre|total|somme")) { intent = "Aggregate"; conf = 0.75; }
-            else if (match(q, "insert|ajout|add")) { intent = "Insert"; conf = 0.82; }
-            else if (match(q, "update|modif|change")) { intent = "Update"; conf = 0.78; }
-            else if (match(q, "delete|supprim|remove")) { intent = "Delete"; conf = 0.82; }
-            else if (match(q, "join|combin|fusion")) { intent = "Join"; conf = 0.68; }
+            String intent = "Unknown";
+            double conf = 0.1;
+            if (match(q, "select|show|get|affiche|montre|liste|cherche")) {
+                intent = "Select";
+                conf = 0.80;
+            } else if (match(q, "count|combien|nombre|total|somme")) {
+                intent = "Aggregate";
+                conf = 0.75;
+            } else if (match(q, "insert|ajout|add")) {
+                intent = "Insert";
+                conf = 0.82;
+            } else if (match(q, "update|modif|change")) {
+                intent = "Update";
+                conf = 0.78;
+            } else if (match(q, "delete|supprim|remove")) {
+                intent = "Delete";
+                conf = 0.82;
+            } else if (match(q, "join|combin|fusion")) {
+                intent = "Join";
+                conf = 0.68;
+            }
             return new Vote("lsh_multi_probe", intent, conf, conf * strategyWeights.get("lsh_multi_probe"));
         }
 
         private Vote resolveWithSyntax(String q) {
-            String intent = "Unknown"; double conf = 0.1;
+            String intent = "Unknown";
+            double conf = 0.1;
             Map<String, String> verbMap = Map.ofEntries(
-                Map.entry("select", "Select"), Map.entry("get", "Select"), Map.entry("show", "Select"),
-                Map.entry("find", "Select"), Map.entry("list", "Select"),
-                Map.entry("affiche", "Select"), Map.entry("montre", "Select"),
-                Map.entry("cherche", "Select"), Map.entry("liste", "Select"),
-                Map.entry("insert", "Insert"), Map.entry("add", "Insert"),
-                Map.entry("ajoute", "Insert"), Map.entry("ajouter", "Insert"),
-                Map.entry("update", "Update"), Map.entry("modify", "Update"),
-                Map.entry("change", "Update"), Map.entry("modifie", "Update"),
-                Map.entry("modifier", "Update"),
-                Map.entry("delete", "Delete"), Map.entry("remove", "Delete"),
-                Map.entry("supprime", "Delete"), Map.entry("supprimer", "Delete"),
-                Map.entry("efface", "Delete"),
-                Map.entry("create", "CreateTable"), Map.entry("creer", "CreateTable"),
-                Map.entry("join", "Join"), Map.entry("combine", "Join"),
-                Map.entry("fusionne", "Join"), Map.entry("joindre", "Join"),
-                Map.entry("explain", "Explain"), Map.entry("explique", "Explain"),
-                Map.entry("analyse", "Explain"),
-                Map.entry("describe", "SchemaInfo"), Map.entry("decris", "SchemaInfo")
+                    Map.entry("select", "Select"), Map.entry("get", "Select"), Map.entry("show", "Select"),
+                    Map.entry("find", "Select"), Map.entry("list", "Select"),
+                    Map.entry("affiche", "Select"), Map.entry("montre", "Select"),
+                    Map.entry("cherche", "Select"), Map.entry("liste", "Select"),
+                    Map.entry("insert", "Insert"), Map.entry("add", "Insert"),
+                    Map.entry("ajoute", "Insert"), Map.entry("ajouter", "Insert"),
+                    Map.entry("update", "Update"), Map.entry("modify", "Update"),
+                    Map.entry("change", "Update"), Map.entry("modifie", "Update"),
+                    Map.entry("modifier", "Update"),
+                    Map.entry("delete", "Delete"), Map.entry("remove", "Delete"),
+                    Map.entry("supprime", "Delete"), Map.entry("supprimer", "Delete"),
+                    Map.entry("efface", "Delete"),
+                    Map.entry("create", "CreateTable"), Map.entry("creer", "CreateTable"),
+                    Map.entry("join", "Join"), Map.entry("combine", "Join"),
+                    Map.entry("fusionne", "Join"), Map.entry("joindre", "Join"),
+                    Map.entry("explain", "Explain"), Map.entry("explique", "Explain"),
+                    Map.entry("analyse", "Explain"),
+                    Map.entry("describe", "SchemaInfo"), Map.entry("decris", "SchemaInfo")
             );
             for (String word : q.split("\\s+")) {
-                if (verbMap.containsKey(word)) { intent = verbMap.get(word); conf = 0.88; break; }
+                if (verbMap.containsKey(word)) {
+                    intent = verbMap.get(word);
+                    conf = 0.88;
+                    break;
+                }
             }
             if ("Unknown".equals(intent) && match(q, "combien|nombre|count|total|moyenne|average|somme|sum|max|min")) {
-                intent = "Aggregate"; conf = 0.85;
+                intent = "Aggregate";
+                conf = 0.85;
             }
             return new Vote("syntactic_parser", intent, conf, conf * strategyWeights.get("syntactic_parser"));
         }
 
         private Vote resolveWithThesaurus(String q) {
-            String intent = "Unknown"; double conf = 0.1;
+            String intent = "Unknown";
+            double conf = 0.1;
             Map<String, String> thesMap = new LinkedHashMap<>();
-            thesMap.put("utilisateurs", "Select"); thesMap.put("clients", "Select");
-            thesMap.put("commandes", "Select"); thesMap.put("produits", "Select");
-            thesMap.put("employes", "Select"); thesMap.put("salaires", "Select");
-            thesMap.put("donnees", "Select"); thesMap.put("enregistrements", "Select");
-            thesMap.put("nombre", "Aggregate"); thesMap.put("total", "Aggregate");
-            thesMap.put("moyenne", "Aggregate"); thesMap.put("somme", "Aggregate");
-            thesMap.put("ajouter", "Insert"); thesMap.put("inserer", "Insert");
-            thesMap.put("modifier", "Update"); thesMap.put("supprimer", "Delete");
-            thesMap.put("joindre", "Join"); thesMap.put("combiner", "Join");
-            thesMap.put("fusionner", "Join"); thesMap.put("expliquer", "Explain");
+            thesMap.put("utilisateurs", "Select");
+            thesMap.put("clients", "Select");
+            thesMap.put("commandes", "Select");
+            thesMap.put("produits", "Select");
+            thesMap.put("employes", "Select");
+            thesMap.put("salaires", "Select");
+            thesMap.put("donnees", "Select");
+            thesMap.put("enregistrements", "Select");
+            thesMap.put("nombre", "Aggregate");
+            thesMap.put("total", "Aggregate");
+            thesMap.put("moyenne", "Aggregate");
+            thesMap.put("somme", "Aggregate");
+            thesMap.put("ajouter", "Insert");
+            thesMap.put("inserer", "Insert");
+            thesMap.put("modifier", "Update");
+            thesMap.put("supprimer", "Delete");
+            thesMap.put("joindre", "Join");
+            thesMap.put("combiner", "Join");
+            thesMap.put("fusionner", "Join");
+            thesMap.put("expliquer", "Explain");
             thesMap.put("decrire", "SchemaInfo");
             for (Map.Entry<String, String> e : thesMap.entrySet()) {
-                if (q.contains(e.getKey())) { intent = e.getValue(); conf = 0.76; break; }
+                if (q.contains(e.getKey())) {
+                    intent = e.getValue();
+                    conf = 0.76;
+                    break;
+                }
             }
             return new Vote("thesaurus_hash", intent, conf, conf * strategyWeights.get("thesaurus_hash"));
         }
 
         private Vote resolveWithRegex(String q) {
-            String intent = "Unknown"; double conf = 0.1;
+            String intent = "Unknown";
+            double conf = 0.1;
             String[][] rules = {
-                {"\\b(select|show|get|find|list|display)\\b.*\\b(from|in)\\b", "Select", "0.85"},
-                {"\\b(insert|add|put)\\b.*\\b(into|to|in)\\b", "Insert", "0.85"},
-                {"\\b(update|modify|change)\\b.*\\b(set)\\b", "Update", "0.85"},
-                {"\\b(delete|remove)\\b.*\\b(from)\\b", "Delete", "0.85"},
-                {"\\b(create|make)\\s+(table)\\b", "CreateTable", "0.9"},
-                {"\\b(alter|modify)\\s+(table)\\b", "AlterTable", "0.9"},
-                {"\\b(drop|remove)\\s+(table)\\b", "DropTable", "0.9"},
-                {"\\b(join|combine|merge)\\b", "Join", "0.7"},
-                {"\\b(count|sum|average|avg|min|max|how many|combien)\\b", "Aggregate", "0.8"},
-                {"\\b(explain|analyse)\\b", "Explain", "0.9"},
-                {"\\b(describe|schema|colonnes)\\b", "SchemaInfo", "0.8"},
-                {"\\b(montre|affiche|liste|cherche)\\b", "Select", "0.8"},
-                {"\\b(ajoute|insere|creer)\\b", "Insert", "0.8"},
-                {"\\b(modifie|change|met a jour)\\b", "Update", "0.8"},
-                {"\\b(supprime|efface|retire)\\b", "Delete", "0.8"},
-                {"\\b(combien|nombre|total|somme|moyenne)\\b", "Aggregate", "0.8"},
-                {"\\b(joindre|combiner|fusionner)\\b", "Join", "0.75"},
-                {"\\b(explique|analyse)\\b", "Explain", "0.85"},
-                {"\\b(decris|structure|colonnes de)\\b", "SchemaInfo", "0.8"},
+                    {"\\b(select|show|get|find|list|display)\\b.*\\b(from|in)\\b", "Select", "0.85"},
+                    {"\\b(insert|add|put)\\b.*\\b(into|to|in)\\b", "Insert", "0.85"},
+                    {"\\b(update|modify|change)\\b.*\\b(set)\\b", "Update", "0.85"},
+                    {"\\b(delete|remove)\\b.*\\b(from)\\b", "Delete", "0.85"},
+                    {"\\b(create|make)\\s+(table)\\b", "CreateTable", "0.9"},
+                    {"\\b(alter|modify)\\s+(table)\\b", "AlterTable", "0.9"},
+                    {"\\b(drop|remove)\\s+(table)\\b", "DropTable", "0.9"},
+                    {"\\b(join|combine|merge)\\b", "Join", "0.7"},
+                    {"\\b(count|sum|average|avg|min|max|how many|combien)\\b", "Aggregate", "0.8"},
+                    {"\\b(explain|analyse)\\b", "Explain", "0.9"},
+                    {"\\b(describe|schema|colonnes)\\b", "SchemaInfo", "0.8"},
+                    {"\\b(montre|affiche|liste|cherche)\\b", "Select", "0.8"},
+                    {"\\b(ajoute|insere|creer)\\b", "Insert", "0.8"},
+                    {"\\b(modifie|change|met a jour)\\b", "Update", "0.8"},
+                    {"\\b(supprime|efface|retire)\\b", "Delete", "0.8"},
+                    {"\\b(combien|nombre|total|somme|moyenne)\\b", "Aggregate", "0.8"},
+                    {"\\b(joindre|combiner|fusionner)\\b", "Join", "0.75"},
+                    {"\\b(explique|analyse)\\b", "Explain", "0.85"},
+                    {"\\b(decris|structure|colonnes de)\\b", "SchemaInfo", "0.8"},
             };
             for (String[] rule : rules) {
                 if (Pattern.compile(rule[0]).matcher(q).find()) {
-                    intent = rule[1]; conf = Double.parseDouble(rule[2]); break;
+                    intent = rule[1];
+                    conf = Double.parseDouble(rule[2]);
+                    break;
                 }
             }
             return new Vote("regex_rules", intent, conf, conf * strategyWeights.get("regex_rules"));
@@ -594,7 +539,7 @@ public class SqlAssistantServer {
                     String table = resolveTable(q, schema);
                     TableSchema ts = schema.get(table);
                     String cols = match(q, "all|tous|tout|\\*") ? "*" :
-                        (ts != null ? ts.columns.stream().map(c -> c.name).collect(Collectors.joining(", ")) : "*");
+                            (ts != null ? ts.columns.stream().map(c -> c.name).collect(Collectors.joining(", ")) : "*");
                     List<String> conds = extractConditions(q, ts);
                     String where = conds.isEmpty() ? "" : "\nWHERE " + String.join("\n  AND ", conds);
                     var om = Pattern.compile("\\b(order by|trie|sorted|tri)\\s+(?:by\\s+)?(\\w+)").matcher(q);
@@ -607,8 +552,8 @@ public class SqlAssistantServer {
                     String table = resolveTable(q, schema);
                     TableSchema ts = schema.get(table);
                     List<String> colNames = ts != null ? ts.columns.stream()
-                        .filter(c -> !c.pk).map(c -> c.name).collect(Collectors.toList())
-                        : List.of("name", "value");
+                            .filter(c -> !c.pk).map(c -> c.name).collect(Collectors.toList())
+                            : List.of("name", "value");
                     String vals = colNames.stream().map(c -> ":" + c).collect(Collectors.joining(", "));
                     return "INSERT INTO " + table + " (" + String.join(", ", colNames) + ")\nVALUES (" + vals + ");";
                 }
@@ -633,7 +578,7 @@ public class SqlAssistantServer {
                     List<String> tables = new ArrayList<>(schema.keySet());
                     if (tables.size() >= 2) {
                         return "SELECT *\nFROM " + tables.get(0) + "\nINNER JOIN " + tables.get(1)
-                            + " ON " + tables.get(0) + ".id = " + tables.get(1) + ".id;";
+                                + " ON " + tables.get(0) + ".id = " + tables.get(1) + ".id;";
                     }
                     return "SELECT * FROM " + tables.get(0) + ";";
                 }
@@ -645,8 +590,12 @@ public class SqlAssistantServer {
                     else if (match(q, "max|maximum|highest|plus grand")) fn = "MAX";
                     else if (match(q, "min|minimum|lowest|plus petit")) fn = "MIN";
                     var gm = Pattern.compile("\\b(group by|par|by)\\s+(\\w+)").matcher(q);
-                    String group = ""; String col = "1";
-                    if (gm.find()) { group = "\nGROUP BY " + gm.group(2); col = gm.group(2); }
+                    String group = "";
+                    String col = "1";
+                    if (gm.find()) {
+                        group = "\nGROUP BY " + gm.group(2);
+                        col = gm.group(2);
+                    }
                     List<String> conds = extractConditions(q, schema.get(table));
                     String where = conds.isEmpty() ? "" : "\nWHERE " + String.join("\n  AND ", conds);
                     return "SELECT " + fn + "(*), " + col + "\nFROM " + table + where + group + ";";
@@ -658,8 +607,8 @@ public class SqlAssistantServer {
                     TableSchema ts = schema.get(table);
                     if (ts != null) {
                         String cols = ts.columns.stream()
-                            .map(c -> "  " + c.name + " " + c.type + (c.pk ? " PRIMARY KEY" : "") + (c.nullable ? "" : " NOT NULL"))
-                            .collect(Collectors.joining(",\n"));
+                                .map(c -> "  " + c.name + " " + c.type + (c.pk ? " PRIMARY KEY" : "") + (c.nullable ? "" : " NOT NULL"))
+                                .collect(Collectors.joining(",\n"));
                         return "-- Schema: " + table + "\n-- Columns:\n" + cols;
                     }
                     return "-- Schema info for: " + table;
@@ -767,7 +716,7 @@ public class SqlAssistantServer {
             for (ColumnDef col : ts.columns) {
                 String t = col.type.toUpperCase();
                 if (t.contains("DECIMAL") || t.contains("INT") || t.contains("DOUBLE")
-                    || t.contains("FLOAT") || t.contains("NUMERIC")) {
+                        || t.contains("FLOAT") || t.contains("NUMERIC")) {
                     if (!col.pk && !col.name.toLowerCase().contains("id")) return col.name;
                 }
             }
@@ -797,10 +746,10 @@ public class SqlAssistantServer {
                 successfulQueries.incrementAndGet();
                 totalLatencyNanos.addAndGet(latency);
                 history.add(new QueryHistory(queryId, query, result.intent, sql,
-                    result.confidence, latencyUs, valid, result.votes, System.currentTimeMillis(), dbName));
+                        result.confidence, latencyUs, valid, result.votes, System.currentTimeMillis(), dbName));
 
                 Optional<PatternEntry> existing = patterns.stream()
-                    .filter(p -> p.intent.equals(result.intent)).findFirst();
+                        .filter(p -> p.intent.equals(result.intent)).findFirst();
                 if (existing.isPresent()) {
                     existing.get().freq++;
                     existing.get().avgConf = (existing.get().avgConf + result.confidence) / 2;
@@ -911,22 +860,39 @@ public class SqlAssistantServer {
     }
 
     static class QueryHistory {
-        final int id; final String query, intent, sql, database;
-        final double confidence; final long latencyUs; final boolean valid;
-        final List<SqlEngine.Vote> votes; final long time;
+        final int id;
+        final String query, intent, sql, database;
+        final double confidence;
+        final long latencyUs;
+        final boolean valid;
+        final List<SqlEngine.Vote> votes;
+        final long time;
+
         QueryHistory(int id, String query, String intent, String sql,
-                      double confidence, long latencyUs, boolean valid,
-                      List<SqlEngine.Vote> votes, long time, String database) {
-            this.id = id; this.query = query; this.intent = intent; this.sql = sql;
-            this.confidence = confidence; this.latencyUs = latencyUs; this.valid = valid;
-            this.votes = votes; this.time = time; this.database = database;
+                     double confidence, long latencyUs, boolean valid,
+                     List<SqlEngine.Vote> votes, long time, String database) {
+            this.id = id;
+            this.query = query;
+            this.intent = intent;
+            this.sql = sql;
+            this.confidence = confidence;
+            this.latencyUs = latencyUs;
+            this.valid = valid;
+            this.votes = votes;
+            this.time = time;
+            this.database = database;
         }
     }
 
     static class PatternEntry {
-        String intent; int freq; double avgConf;
+        String intent;
+        int freq;
+        double avgConf;
+
         PatternEntry(String intent, int freq, double avgConf) {
-            this.intent = intent; this.freq = freq; this.avgConf = avgConf;
+            this.intent = intent;
+            this.freq = freq;
+            this.avgConf = avgConf;
         }
     }
 
@@ -943,15 +909,15 @@ public class SqlAssistantServer {
             @SuppressWarnings("unchecked")
             Map<String, Object> map = (Map<String, Object>) val;
             String entries = map.entrySet().stream()
-                .map(e -> "\"" + escapeJson(e.getKey()) + "\":" + toJson(e.getValue()))
-                .collect(Collectors.joining(","));
+                    .map(e -> "\"" + escapeJson(e.getKey()) + "\":" + toJson(e.getValue()))
+                    .collect(Collectors.joining(","));
             return "{" + entries + "}";
         }
         if (val instanceof List) {
             @SuppressWarnings("unchecked")
             List<Object> list = (List<Object>) val;
             String items = list.stream().map(SqlAssistantServer::toJson)
-                .collect(Collectors.joining(","));
+                    .collect(Collectors.joining(","));
             return "[" + items + "]";
         }
         return "\"" + escapeJson(val.toString()) + "\"";
@@ -973,7 +939,7 @@ public class SqlAssistantServer {
         while (i < json.length()) {
             // Skip whitespace and commas
             while (i < json.length() && (json.charAt(i) == ' ' || json.charAt(i) == '\n'
-                || json.charAt(i) == '\r' || json.charAt(i) == '\t' || json.charAt(i) == ','))
+                    || json.charAt(i) == '\r' || json.charAt(i) == '\t' || json.charAt(i) == ','))
                 i++;
 
             if (i >= json.length() || json.charAt(i) == ']') break;
@@ -984,7 +950,10 @@ public class SqlAssistantServer {
                     if (json.charAt(i) == '{') depth++;
                     else if (json.charAt(i) == '}') {
                         depth--;
-                        if (depth == 0) { i++; break; }
+                        if (depth == 0) {
+                            i++;
+                            break;
+                        }
                     }
                     i++;
                 }
@@ -1018,12 +987,17 @@ public class SqlAssistantServer {
 
     static class ApiDatabasesHandler implements HttpHandler {
         private final DatabaseManager dbMgr;
-        ApiDatabasesHandler(DatabaseManager dbMgr) { this.dbMgr = dbMgr; }
+
+        ApiDatabasesHandler(DatabaseManager dbMgr) {
+            this.dbMgr = dbMgr;
+        }
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
+                sendCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                return;
             }
             sendJson(exchange, Map.of("databases", dbMgr.getDatabaseList()));
         }
@@ -1032,18 +1006,23 @@ public class SqlAssistantServer {
     static class ApiQueryHandler implements HttpHandler {
         private final SqlEngine engine;
         private final DatabaseManager dbMgr;
+
         ApiQueryHandler(SqlEngine engine, DatabaseManager dbMgr) {
-            this.engine = engine; this.dbMgr = dbMgr;
+            this.engine = engine;
+            this.dbMgr = dbMgr;
         }
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             try {
                 if (!"POST".equals(exchange.getRequestMethod()) && !"OPTIONS".equals(exchange.getRequestMethod())) {
-                    exchange.sendResponseHeaders(405, -1); return;
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
                 }
                 if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                    sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
+                    sendCorsHeaders(exchange);
+                    exchange.sendResponseHeaders(204, -1);
+                    return;
                 }
                 String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
                 String query = extractJsonString(body, "query");
@@ -1051,29 +1030,37 @@ public class SqlAssistantServer {
                 if (dbName == null || dbName.isEmpty()) dbName = dbMgr.getDatabaseList().get(0).get("name").toString();
                 Map<String, TableSchema> schema = dbMgr.getSchema(dbName);
                 Map<String, Object> result = query == null || query.isEmpty()
-                    ? Map.of("error", "Query must not be blank")
-                    : engine.processQuery(query, dbName, schema);
+                        ? Map.of("error", "Query must not be blank")
+                        : engine.processQuery(query, dbName, schema);
                 sendJson(exchange, result);
             } catch (Exception e) {
                 e.printStackTrace();
-                try { sendJson(exchange, Map.of("error", e.getMessage()), 500); }
-                catch (Exception ignored) {}
+                try {
+                    sendJson(exchange, Map.of("error", e.getMessage()), 500);
+                } catch (Exception ignored) {
+                }
             }
         }
     }
 
     static class ApiExecuteHandler implements HttpHandler {
         private final DatabaseManager dbMgr;
-        ApiExecuteHandler(DatabaseManager dbMgr) { this.dbMgr = dbMgr; }
+
+        ApiExecuteHandler(DatabaseManager dbMgr) {
+            this.dbMgr = dbMgr;
+        }
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             try {
                 if (!"POST".equals(exchange.getRequestMethod()) && !"OPTIONS".equals(exchange.getRequestMethod())) {
-                    exchange.sendResponseHeaders(405, -1); return;
+                    exchange.sendResponseHeaders(405, -1);
+                    return;
                 }
                 if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                    sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
+                    sendCorsHeaders(exchange);
+                    exchange.sendResponseHeaders(204, -1);
+                    return;
                 }
                 String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
                 String sql = extractJsonString(body, "sql");
@@ -1107,7 +1094,8 @@ public class SqlAssistantServer {
                         response.put("hasMore", qr.hasMore);
                         response.put("columns", qr.columns.stream().map(c -> {
                             Map<String, Object> m = new LinkedHashMap<>();
-                            m.put("name", c.name); m.put("type", c.type);
+                            m.put("name", c.name);
+                            m.put("type", c.type);
                             return m;
                         }).collect(Collectors.toList()));
                         response.put("rows", qr.rows);
@@ -1123,20 +1111,27 @@ public class SqlAssistantServer {
                 sendJson(exchange, response);
             } catch (Exception e) {
                 e.printStackTrace();
-                try { sendJson(exchange, Map.of("success", false, "error", e.getMessage()), 500); }
-                catch (Exception ignored) {}
+                try {
+                    sendJson(exchange, Map.of("success", false, "error", e.getMessage()), 500);
+                } catch (Exception ignored) {
+                }
             }
         }
     }
 
     static class ApiSchemaHandler implements HttpHandler {
         private final DatabaseManager dbMgr;
-        ApiSchemaHandler(DatabaseManager dbMgr) { this.dbMgr = dbMgr; }
+
+        ApiSchemaHandler(DatabaseManager dbMgr) {
+            this.dbMgr = dbMgr;
+        }
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
+                sendCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                return;
             }
             String query = exchange.getRequestURI().getQuery();
             String dbName = extractQueryParam(query, "db");
@@ -1153,8 +1148,10 @@ public class SqlAssistantServer {
                 Map<String, Object> tableMap = new LinkedHashMap<>();
                 List<Map<String, Object>> cols = e.getValue().columns.stream().map(c -> {
                     Map<String, Object> m = new LinkedHashMap<>();
-                    m.put("name", c.name); m.put("type", c.type);
-                    m.put("pk", c.pk); m.put("nullable", c.nullable);
+                    m.put("name", c.name);
+                    m.put("type", c.type);
+                    m.put("pk", c.pk);
+                    m.put("nullable", c.nullable);
                     return m;
                 }).collect(Collectors.toList());
                 tableMap.put("columns", cols);
@@ -1168,11 +1165,17 @@ public class SqlAssistantServer {
 
     static class ApiMetricsHandler implements HttpHandler {
         private final SqlEngine engine;
-        ApiMetricsHandler(SqlEngine engine) { this.engine = engine; }
+
+        ApiMetricsHandler(SqlEngine engine) {
+            this.engine = engine;
+        }
+
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
+                sendCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                return;
             }
             sendJson(exchange, engine.getMetrics());
         }
@@ -1180,11 +1183,17 @@ public class SqlAssistantServer {
 
     static class ApiStrategiesHandler implements HttpHandler {
         private final SqlEngine engine;
-        ApiStrategiesHandler(SqlEngine engine) { this.engine = engine; }
+
+        ApiStrategiesHandler(SqlEngine engine) {
+            this.engine = engine;
+        }
+
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
+                sendCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                return;
             }
             sendJson(exchange, engine.getStrategies());
         }
@@ -1192,11 +1201,17 @@ public class SqlAssistantServer {
 
     static class ApiPatternsHandler implements HttpHandler {
         private final SqlEngine engine;
-        ApiPatternsHandler(SqlEngine engine) { this.engine = engine; }
+
+        ApiPatternsHandler(SqlEngine engine) {
+            this.engine = engine;
+        }
+
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
+                sendCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                return;
             }
             List<Map<String, Object>> patterns = engine.getPatterns();
             sendJson(exchange, Map.of("patterns", patterns));
@@ -1205,14 +1220,21 @@ public class SqlAssistantServer {
 
     static class ApiFeedbackHandler implements HttpHandler {
         private final SqlEngine engine;
-        ApiFeedbackHandler(SqlEngine engine) { this.engine = engine; }
+
+        ApiFeedbackHandler(SqlEngine engine) {
+            this.engine = engine;
+        }
+
         @Override
         public void handle(HttpExchange exchange) throws IOException {
             if (!"POST".equals(exchange.getRequestMethod()) && !"OPTIONS".equals(exchange.getRequestMethod())) {
-                exchange.sendResponseHeaders(405, -1); return;
+                exchange.sendResponseHeaders(405, -1);
+                return;
             }
             if ("OPTIONS".equals(exchange.getRequestMethod())) {
-                sendCorsHeaders(exchange); exchange.sendResponseHeaders(204, -1); return;
+                sendCorsHeaders(exchange);
+                exchange.sendResponseHeaders(204, -1);
+                return;
             }
             String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             int queryId = extractJsonInt(body, "queryId");
@@ -1224,7 +1246,10 @@ public class SqlAssistantServer {
 
     static class StaticFileHandler implements HttpHandler {
         private final Path baseDir;
-        StaticFileHandler(Path baseDir) { this.baseDir = baseDir; }
+
+        StaticFileHandler(Path baseDir) {
+            this.baseDir = baseDir;
+        }
 
         @Override
         public void handle(HttpExchange exchange) throws IOException {

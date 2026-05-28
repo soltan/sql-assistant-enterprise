@@ -10,6 +10,7 @@ import io.enterprise.sql.vector.HNSWIndex;
 
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * The SQL Agent — the top-level agent implementation.

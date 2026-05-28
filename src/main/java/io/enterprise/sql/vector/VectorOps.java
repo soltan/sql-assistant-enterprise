@@ -11,7 +11,7 @@ import jdk.incubator.vector.*;
  */
 public final class VectorOps {
 
-    private static final FloatVector.FloatSpecies SPECIES = FloatVector.SPECIES_PREFERRED;
+    private static final VectorSpecies<Float> SPECIES = FloatVector.SPECIES_PREFERRED;
 
     private VectorOps() {} // utility class
 

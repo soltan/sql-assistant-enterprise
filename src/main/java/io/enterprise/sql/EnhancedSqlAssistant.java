@@ -19,6 +19,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Enhanced SQL Assistant V2 — with all semantic precision improvements.
@@ -185,7 +186,7 @@ public class EnhancedSqlAssistant {
         vectorMemory.insert(System.nanoTime(), embedding, hash);
 
         // Update state
-        var interaction = new JakartaAIAdapter.JakartaAIAdapter.Interaction(
+        var interaction = new JakartaAIAdapter.Interaction(
             query, ensembleResult.intent(), sqlQuery,
             validation.valid(), validation.format(), latency
         );
@@ -278,7 +279,7 @@ public class EnhancedSqlAssistant {
                     long elapsedUs = response.latencyNanos() / 1000;
 
                     System.out.println("\n┌─ Intent: " + formatIntent(response.intent()));
-                    System.out.println("├─ Ensemble confidence: " + String.format("%.2f%%", response.ensembleConfidence() * 100));
+                    //System.out.println("├─ Ensemble confidence: " + String.format("%.2f%%", response.ensembleConfidence() * 100));
                     System.out.println("├─ Calibrated confidence: " + String.format("%.2f%%", response.calibratedConfidence() * 100));
                     System.out.println("├─ Frequency boost: " + String.format("%.2fx", response.frequencyBoost()));
                     System.out.println("├─ Latency: " + elapsedUs + " μs");

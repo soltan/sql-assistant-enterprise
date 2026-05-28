@@ -4,6 +4,7 @@ import io.enterprise.sql.model.SemanticHash;
 import java.lang.foreign.*;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 /**
  * Semantic index that maps SemanticHash → stored entries.

@@ -109,7 +109,7 @@ public class IntentResolver {
         List<String> tables = extractTables(normalized);
         String table = tables.isEmpty() ? "" : tables.getFirst();
         String whereClause = extractWhere(normalized);
-        return new SqlIntent.Update(rawQuery, confidence, Map.of(), whereClause);
+        return new SqlIntent.Update(rawQuery, confidence, table, Map.of(), whereClause);
     }
 
     private SqlIntent resolveDeleteIntent(String rawQuery, double confidence, String normalized) {
