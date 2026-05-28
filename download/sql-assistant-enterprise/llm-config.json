@@ -1,0 +1,9 @@
+{
+  "modelPath": "",
+  "contextLength": 2048,
+  "temperature": 0.3,
+  "topP": 0.9,
+  "maxTokens": 512,
+  "enabled": true,
+  "modelLabel": "Qwen3.5"
+}
