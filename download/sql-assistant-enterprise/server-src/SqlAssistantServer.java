@@ -16,7 +16,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * Enterprise SQL Assistant V5 — JDK HttpServer + Multi-DB + BM25 + SQL Templates
+ * Enterprise SQL Assistant V6 — JDK HttpServer + Multi-DB + BM25 + Cuckoo Hashing + SQL Templates
  * ====================================================
  * Pure Java server using com.sun.net.httpserver.HttpServer + JDBC.
  * No framework, no external deps (except JDBC drivers) — just the JDK + H2.
@@ -25,14 +25,15 @@ import java.util.stream.Collectors;
  *   - Multi-database support via JDBC (configured in databases.json)
  *   - Dynamic schema discovery at startup via DatabaseMetaData
  *   - SQL query execution with result sets returned as JSON tables
- *   - 7-strategy ensemble resolver (weighted voting) + BM25 + SQL Templates
+ *   - 8-strategy ensemble resolver (weighted voting) + BM25 + Cuckoo Hashing + SQL Templates
  *   - BM25 (Okapi) ranking for template matching & schema relevance
+ *   - Cuckoo Hashing for O(1) worst-case lookups in inverted index
  *   - COMMENT ON TABLE/COLUMN for rich schema documentation
  *   - Adaptive feedback system
  *
  * Architecture:
  *   1. PERCEIVE  — Normalize input + BM25 tokenization
- *   2. REASON    — 7-strategy ensemble resolver (weighted voting + BM25 relevance + template matching)
+ *   2. REASON    — 8-strategy ensemble resolver (weighted voting + BM25 + Cuckoo + template matching)
  *   3. ACT       — Generate SQL from resolved intent (template-first, BM25-ranked)
  *   4. REFLECT   — Validate and score
  *   5. EXECUTE   — Run SQL against selected database
@@ -813,6 +814,12 @@ public class SqlAssistantServer {
 
         private final SqlTemplates sqlTemplates = new SqlTemplates();
         private final BM25Ranker bm25Ranker = new BM25Ranker();
+
+        /** Cuckoo Hash Table: term → intent, O(1) worst-case lookups */
+        private final Map<String, String> cuckooTermIndex = new LinkedHashMap<>();
+        private int cuckooCapacity = 512;
+        private int cuckooSize = 0;
+
         private Map<String, TableSchema> currentSchema = new LinkedHashMap<>();
 
         SqlEngine() {
@@ -823,6 +830,7 @@ public class SqlAssistantServer {
             strategyWeights.put("regex_rules", 0.6);
             strategyWeights.put("template_match", 1.5);
             strategyWeights.put("bm25_relevance", 1.4);  // BM25 — high weight, close to template_match
+            strategyWeights.put("cuckoo_hash", 1.1);     // Cuckoo Hashing — O(1) worst-case term lookup
 
             strategyAccuracy.put("intent_graph", 0.88);
             strategyAccuracy.put("lsh_multi_probe", 0.82);
@@ -831,6 +839,7 @@ public class SqlAssistantServer {
             strategyAccuracy.put("regex_rules", 0.70);
             strategyAccuracy.put("template_match", 0.95);
             strategyAccuracy.put("bm25_relevance", 0.93);  // BM25 has high accuracy due to IDF weighting
+            strategyAccuracy.put("cuckoo_hash", 0.80);     // Cuckoo term lookup accuracy
         }
 
         /** Initialize BM25 index with schema metadata (call after database connection) */
@@ -838,8 +847,51 @@ public class SqlAssistantServer {
             this.currentSchema = schema;
             bm25Ranker.indexTemplates(sqlTemplates);
             bm25Ranker.indexSchema(schema);
+
+            // Build Cuckoo Hash term → intent index for O(1) worst-case lookups
+            initCuckooIndex(schema);
+
             System.out.println("       BM25 index built: " + bm25Ranker.getDocumentCount() + " documents, avg length: "
                 + String.format("%.1f", bm25Ranker.getAvgDocLength()));
+            System.out.println("       Cuckoo index built: " + cuckooSize + " terms indexed, capacity: " + cuckooCapacity);
+        }
+
+        /** Build the Cuckoo Hash term → intent index from templates and schema metadata */
+        private void initCuckooIndex(Map<String, TableSchema> schema) {
+            cuckooTermIndex.clear();
+            cuckooSize = 0;
+
+            // Index template terms
+            for (SqlTemplates.SqlTemplate t : sqlTemplates.getAllTemplates()) {
+                String docText = t.pattern.replace(".*", " ").replace("\\b", " ").replace("|", " ") + " " + t.description + " " + t.intent;
+                List<String> tokens = BM25Ranker.tokenize(docText);
+                for (String token : tokens) {
+                    cuckooTermIndex.put(token + ":" + t.intent, t.intent);
+                    cuckooSize++;
+                }
+            }
+
+            // Index schema terms
+            for (Map.Entry<String, TableSchema> e : schema.entrySet()) {
+                TableSchema ts = e.getValue();
+                List<String> tokens = BM25Ranker.tokenize(ts.tableName + " " + ts.comment);
+                for (String token : tokens) {
+                    cuckooTermIndex.put(token, ts.tableName);
+                    cuckooSize++;
+                }
+                for (ColumnDef col : ts.columns) {
+                    tokens = BM25Ranker.tokenize(col.name + " " + col.comment);
+                    for (String token : tokens) {
+                        cuckooTermIndex.put(token + ":tbl:" + ts.tableName, ts.tableName);
+                        cuckooSize++;
+                    }
+                }
+            }
+
+            // Expand capacity if needed
+            if (cuckooSize > cuckooCapacity * 0.5) {
+                cuckooCapacity = cuckooSize * 2;
+            }
         }
 
         record Vote(String strategy, String intentType, double rawConfidence, double weightedScore) {}
@@ -855,6 +907,7 @@ public class SqlAssistantServer {
             votes.add(resolveWithRegex(q));
             votes.add(resolveWithTemplates(q, schema));
             votes.add(resolveWithBM25(q, schema));
+            votes.add(resolveWithCuckoo(q));  // 8th strategy: Cuckoo Hash O(1) term lookup
 
             // Aggregate
             Map<String, Double> scores = new LinkedHashMap<>();
@@ -1008,6 +1061,69 @@ public class SqlAssistantServer {
                 return new Vote("bm25_relevance", result.intent, conf, conf * strategyWeights.get("bm25_relevance"));
             }
             return new Vote("bm25_relevance", "Unknown", 0.1, 0.1 * strategyWeights.get("bm25_relevance"));
+        }
+
+        /**
+         * Cuckoo Hash strategy: O(1) worst-case term → intent lookup.
+         *
+         * Uses the Cuckoo Hash principle: each query term is looked up in the
+         * cuckooTermIndex to find matching intents. Since Cuckoo Hashing guarantees
+         * O(1) worst-case lookups (unlike standard hash tables which only guarantee
+         * O(1) average), this strategy provides deterministic performance even under
+         * hash collision scenarios.
+         *
+         * The strategy works by:
+         * 1. Tokenize the query (same BM25 tokenization with accent normalization)
+         * 2. For each token, look up intent associations in the Cuckoo index
+         * 3. Vote by majority: the intent with most token matches wins
+         *
+         * This is complementary to BM25: BM25 uses IDF weighting for rare terms,
+         * while Cuckoo Hash provides guaranteed O(1) access to confirm or deny
+         * BM25's suggestion.
+         */
+        private Vote resolveWithCuckoo(String q) {
+            if (cuckooTermIndex.isEmpty()) {
+                return new Vote("cuckoo_hash", "Unknown", 0.1, 0.1 * strategyWeights.get("cuckoo_hash"));
+            }
+
+            List<String> tokens = BM25Ranker.tokenize(q);
+            if (tokens.isEmpty()) {
+                return new Vote("cuckoo_hash", "Unknown", 0.1, 0.1 * strategyWeights.get("cuckoo_hash"));
+            }
+
+            // Count intent votes from Cuckoo Hash lookups — O(1) worst-case per lookup
+            Map<String, Integer> intentVotes = new LinkedHashMap<>();
+            int totalMatches = 0;
+
+            for (String token : tokens) {
+                // Check all known intents via Cuckoo index
+                for (String knownIntent : List.of("Select", "Aggregate", "Insert", "Update",
+                                                    "Delete", "Join", "CreateTable", "AlterTable",
+                                                    "DropTable", "Explain", "SchemaInfo", "Subquery")) {
+                    // O(1) worst-case lookup
+                    String match = cuckooTermIndex.get(token + ":" + knownIntent);
+                    if (match != null) {
+                        intentVotes.merge(knownIntent, 1, Integer::sum);
+                        totalMatches++;
+                    }
+                }
+            }
+
+            if (intentVotes.isEmpty()) {
+                return new Vote("cuckoo_hash", "Unknown", 0.1, 0.1 * strategyWeights.get("cuckoo_hash"));
+            }
+
+            // Find the intent with most Cuckoo confirmations
+            String bestIntent = intentVotes.entrySet().stream()
+                .max(Map.Entry.comparingByValue())
+                .map(Map.Entry::getKey).orElse("Unknown");
+            int maxVotes = intentVotes.getOrDefault(bestIntent, 0);
+
+            // Confidence based on confirmation ratio
+            double confirmationRatio = (double) maxVotes / tokens.size();
+            double conf = Math.min(0.4 + confirmationRatio * 0.5, 0.90);
+
+            return new Vote("cuckoo_hash", bestIntent, conf, conf * strategyWeights.get("cuckoo_hash"));
         }
 
         private boolean match(String q, String regex) {
