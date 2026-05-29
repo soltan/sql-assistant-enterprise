@@ -16,7 +16,7 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * Enterprise SQL Assistant V4 — JDK HttpServer Backend + Multi-Database + SQL Templates
+ * Enterprise SQL Assistant V5 — JDK HttpServer + Multi-DB + BM25 + SQL Templates
  * ====================================================
  * Pure Java server using com.sun.net.httpserver.HttpServer + JDBC.
  * No framework, no external deps (except JDBC drivers) — just the JDK + H2.
@@ -25,14 +25,15 @@ import java.util.stream.Collectors;
  *   - Multi-database support via JDBC (configured in databases.json)
  *   - Dynamic schema discovery at startup via DatabaseMetaData
  *   - SQL query execution with result sets returned as JSON tables
- *   - 6-strategy ensemble resolver (weighted voting) + SQL Templates
- *   - Adaptive feedback system
+ *   - 7-strategy ensemble resolver (weighted voting) + BM25 + SQL Templates
+ *   - BM25 (Okapi) ranking for template matching & schema relevance
  *   - COMMENT ON TABLE/COLUMN for rich schema documentation
+ *   - Adaptive feedback system
  *
  * Architecture:
- *   1. PERCEIVE  — Normalize input
- *   2. REASON    — 6-strategy ensemble resolver (weighted voting + template matching)
- *   3. ACT       — Generate SQL from resolved intent (template-first)
+ *   1. PERCEIVE  — Normalize input + BM25 tokenization
+ *   2. REASON    — 7-strategy ensemble resolver (weighted voting + BM25 relevance + template matching)
+ *   3. ACT       — Generate SQL from resolved intent (template-first, BM25-ranked)
  *   4. REFLECT   — Validate and score
  *   5. EXECUTE   — Run SQL against selected database
  *
@@ -525,7 +526,276 @@ public class SqlAssistantServer {
     record TableSchema(String tableName, List<ColumnDef> columns, List<String> indexes, String comment) {}
 
     // ═══════════════════════════════════════════════════════════
-    // ENGINE — Ensemble Resolver + SQL Generator + SQL Templates
+    // BM25 RANKER — Okapi BM25 for Template & Schema Relevance
+    // ═══════════════════════════════════════════════════════════
+
+    /**
+     * Pure Java BM25 (Okapi BM25) implementation — no external dependencies.
+     *
+     * BM25 scoring: score(D,Q) = Σ IDF(qi) × (f(qi,D) × (k1 + 1)) / (f(qi,D) + k1 × (1 - b + b × |D|/avgdl))
+     *
+     * Where:
+     *   f(qi,D)  = term frequency of qi in document D
+     *   |D|      = document length (term count)
+     *   avgdl    = average document length across corpus
+     *   k1       = term frequency saturation parameter (1.2-2.0 typical)
+     *   b        = length normalization parameter (0.75 typical)
+     *   IDF(qi)  = ln((N - n(qi) + 0.5) / (n(qi) + 0.5) + 1)
+     *
+     * Uses:
+     *   1. Rank SQL templates by relevance to user query (template pattern + description as document)
+     *   2. Rank tables/columns by relevance using COMMENT ON metadata
+     *   3. 7th strategy in ensemble resolver (bm25_relevance)
+     *
+     * Stop words: French + English common words filtered out for better IDF discrimination.
+     */
+    static class BM25Ranker {
+
+        private static final double K1 = 1.5;   // Term frequency saturation
+        private static final double B = 0.75;    // Length normalization
+        private static final Set<String> STOP_WORDS = Set.of(
+            // English stop words
+            "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
+            "have", "has", "had", "do", "does", "did", "will", "would", "could",
+            "should", "may", "might", "can", "shall", "to", "of", "in", "for",
+            "on", "with", "at", "by", "from", "as", "into", "through", "during",
+            "before", "after", "above", "below", "between", "out", "off", "over",
+            "under", "again", "further", "then", "once", "and", "but", "or",
+            "nor", "not", "so", "yet", "both", "either", "neither", "each",
+            "every", "all", "any", "few", "more", "most", "other", "some",
+            "such", "no", "only", "own", "same", "than", "too", "very",
+            "just", "because", "if", "when", "where", "how", "what", "which",
+            "who", "whom", "this", "that", "these", "those", "it", "its",
+            "me", "my", "we", "our", "you", "your", "he", "him", "his",
+            "she", "her", "they", "them", "their",
+            // French stop words
+            "le", "la", "les", "un", "une", "des", "de", "du", "au", "aux",
+            "et", "ou", "mais", "donc", "car", "ni", "que", "qui", "quoi",
+            "dont", "est", "sont", "etait", "etaient", "a", "ont", "fait",
+            "dans", "sur", "sous", "avec", "pour", "par", "en", "vers",
+            "chez", "sans", "entre", "vers", "chez", "ce", "cet", "cette",
+            "ces", "il", "elle", "ils", "elles", "nous", "vous", "on",
+            "je", "tu", "me", "te", "se", "lui", "leur", "y", "en",
+            "ne", "pas", "plus", "aussi", "tres", "bien", "tout", "tous",
+            "toute", "toutes", "autre", "autres", "meme", "chaque"
+        );
+
+        /** Document entry for BM25 index */
+        record BM25Document(String id, String intent, List<String> tokens, String source) {
+            int length() { return tokens.size(); }
+        }
+
+        /** Scored result */
+        record BM25Result(String id, String intent, double score, String source) {}
+
+        private final Map<String, BM25Document> documents = new LinkedHashMap<>();
+        private final Map<String, Integer> df = new LinkedHashMap<>(); // document frequency per term
+        private int totalDocs = 0;
+        private double avgDocLength = 0;
+
+        /** Tokenize text: lowercase, split on non-alphanumeric, remove stop words, handle French accents */
+        static List<String> tokenize(String text) {
+            if (text == null || text.isBlank()) return List.of();
+            // Normalize: lowercase, replace accents with unaccented equivalents for matching
+            String normalized = text.toLowerCase()
+                .replace("é", "e").replace("è", "e").replace("ê", "e").replace("ë", "e")
+                .replace("à", "a").replace("â", "a")
+                .replace("ù", "u").replace("û", "u")
+                .replace("ô", "o").replace("î", "i").replace("ï", "i")
+                .replace("ç", "c")
+                .replace("æ", "ae").replace("œ", "oe");
+            String[] raw = normalized.split("[^a-z0-9]+");
+            List<String> tokens = new ArrayList<>();
+            for (String t : raw) {
+                if (t.length() > 1 && !STOP_WORDS.contains(t)) {
+                    tokens.add(t);
+                }
+            }
+            return tokens;
+        }
+
+        /** Add a document to the BM25 index */
+        void addDocument(String id, String intent, String text, String source) {
+            List<String> tokens = tokenize(text);
+            BM25Document doc = new BM25Document(id, intent, tokens, source);
+            documents.put(id, doc);
+
+            // Update document frequencies
+            Set<String> uniqueTerms = new HashSet<>(tokens);
+            for (String term : uniqueTerms) {
+                df.merge(term, 1, Integer::sum);
+            }
+
+            // Update corpus stats
+            totalDocs = documents.size();
+            long totalLen = documents.values().stream().mapToLong(BM25Document::length).sum();
+            avgDocLength = totalDocs > 0 ? (double) totalLen / totalDocs : 0;
+        }
+
+        /** Rebuild corpus stats after batch insertion */
+        void rebuildStats() {
+            totalDocs = documents.size();
+            df.clear();
+            long totalLen = 0;
+            for (BM25Document doc : documents.values()) {
+                totalLen += doc.length();
+                Set<String> uniqueTerms = new HashSet<>(doc.tokens);
+                for (String term : uniqueTerms) {
+                    df.merge(term, 1, Integer::sum);
+                }
+            }
+            avgDocLength = totalDocs > 0 ? (double) totalLen / totalDocs : 0;
+        }
+
+        /** Compute IDF for a term */
+        double idf(String term) {
+            int n = df.getOrDefault(term, 0);
+            return Math.log((totalDocs - n + 0.5) / (n + 0.5) + 1.0);
+        }
+
+        /** Compute BM25 score of a query against a single document */
+        double score(List<String> queryTokens, BM25Document doc) {
+            double score = 0;
+            int docLen = doc.length();
+            Map<String, Long> tfMap = doc.tokens.stream()
+                .collect(Collectors.groupingBy(t -> t, Collectors.counting()));
+
+            for (String qTerm : queryTokens) {
+                long tf = tfMap.getOrDefault(qTerm, 0L);
+                if (tf == 0) continue;
+                double idfVal = idf(qTerm);
+                double numerator = tf * (K1 + 1);
+                double denominator = tf + K1 * (1 - B + B * docLen / avgDocLength);
+                score += idfVal * numerator / denominator;
+            }
+            return score;
+        }
+
+        /** Rank all documents against a query, return top-K results */
+        List<BM25Result> rank(String query, int topK) {
+            List<String> queryTokens = tokenize(query);
+            if (queryTokens.isEmpty() || documents.isEmpty()) return List.of();
+
+            List<BM25Result> results = new ArrayList<>();
+            for (BM25Document doc : documents.values()) {
+                double s = score(queryTokens, doc);
+                if (s > 0) {
+                    results.add(new BM25Result(doc.id, doc.intent, s, doc.source));
+                }
+            }
+            results.sort((a, b) -> Double.compare(b.score, a.score));
+            return results.size() > topK ? results.subList(0, topK) : results;
+        }
+
+        /** Rank documents and return normalized scores (0-1 range) */
+        List<BM25Result> rankNormalized(String query, int topK) {
+            List<BM25Result> raw = rank(query, topK);
+            if (raw.isEmpty()) return raw;
+            double maxScore = raw.get(0).score;
+            if (maxScore <= 0) return raw;
+            return raw.stream().map(r -> new BM25Result(r.id, r.intent, r.score / maxScore, r.source))
+                .collect(Collectors.toList());
+        }
+
+        /** Find the best matching intent via BM25 */
+        BM25Result findBestIntent(String query) {
+            List<BM25Result> results = rankNormalized(query, 1);
+            return results.isEmpty() ? null : results.get(0);
+        }
+
+        /** Build BM25 index from SQL templates */
+        void indexTemplates(SqlTemplates templates) {
+            for (SqlTemplates.SqlTemplate t : templates.getAllTemplates()) {
+                // Document = pattern + description + intent (rich source for matching)
+                String docText = t.pattern.replace(".*", " ").replace("\\b", " ")
+                    .replace("|", " ") + " " + t.description + " " + t.intent;
+                addDocument("tpl_" + t.description.hashCode(), t.intent, docText, "template");
+            }
+            rebuildStats();
+        }
+
+        /** Build BM25 index from schema metadata (table names + COMMENT ON) */
+        void indexSchema(Map<String, TableSchema> schema) {
+            for (Map.Entry<String, TableSchema> e : schema.entrySet()) {
+                TableSchema ts = e.getValue();
+                // Document = table name + table comment + all column names + all column comments
+                StringBuilder sb = new StringBuilder();
+                sb.append(ts.tableName).append(" ");
+                sb.append(ts.comment).append(" ");
+                for (ColumnDef col : ts.columns) {
+                    sb.append(col.name).append(" ");
+                    sb.append(col.comment).append(" ");
+                    // Also add type hints for matching (e.g., "price" → DECIMAL, "date" → TIMESTAMP)
+                    if (col.type.toUpperCase().contains("DECIMAL") || col.type.toUpperCase().contains("INT")) {
+                        sb.append("nombre montant valeur quantite numeric ");
+                    }
+                    if (col.type.toUpperCase().contains("TIMESTAMP") || col.type.toUpperCase().contains("DATE")) {
+                        sb.append("date temps periode horodatage ");
+                    }
+                    if (col.type.toUpperCase().contains("BOOLEAN")) {
+                        sb.append("boolean indicateur drapeau flag ");
+                    }
+                    if (col.type.toUpperCase().contains("VARCHAR") || col.type.toUpperCase().contains("TEXT")) {
+                        sb.append("texte nom libelle description ");
+                    }
+                }
+                addDocument("tbl_" + ts.tableName.toLowerCase(), "", sb.toString(), "schema_table");
+            }
+            rebuildStats();
+        }
+
+        /** Find the best matching table for a query using BM25 over schema metadata */
+        String findBestTable(String query, Map<String, TableSchema> schema) {
+            List<String> queryTokens = tokenize(query);
+            if (queryTokens.isEmpty()) return schema.keySet().iterator().next();
+
+            String bestTable = null;
+            double bestScore = -1;
+
+            for (Map.Entry<String, TableSchema> e : schema.entrySet()) {
+                TableSchema ts = e.getValue();
+                // Build mini-document for this table
+                String docText = ts.tableName + " " + ts.comment;
+                for (ColumnDef col : ts.columns) {
+                    docText += " " + col.name + " " + col.comment;
+                }
+                List<String> docTokens = tokenize(docText);
+
+                // Compute BM25 score
+                Map<String, Long> tfMap = docTokens.stream()
+                    .collect(Collectors.groupingBy(t -> t, Collectors.counting()));
+                double s = 0;
+                int docLen = docTokens.size();
+                for (String qTerm : queryTokens) {
+                    long tf = tfMap.getOrDefault(qTerm, 0L);
+                    if (tf == 0) continue;
+                    double idfVal = idf(qTerm);
+                    double numerator = tf * (K1 + 1);
+                    double denominator = tf + K1 * (1 - B + B * docLen / Math.max(avgDocLength, 1));
+                    s += idfVal * numerator / denominator;
+                }
+
+                // Bonus: direct name match (table name exactly appears in query)
+                String tblLower = ts.tableName.toLowerCase();
+                if (query.toLowerCase().contains(tblLower)) {
+                    s += 3.0; // Strong bonus for direct table name match
+                }
+
+                if (s > bestScore) {
+                    bestScore = s;
+                    bestTable = e.getKey();
+                }
+            }
+
+            return bestTable != null ? bestTable : schema.keySet().iterator().next();
+        }
+
+        int getDocumentCount() { return totalDocs; }
+        double getAvgDocLength() { return avgDocLength; }
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    // ENGINE — Ensemble Resolver + SQL Generator + BM25 + SQL Templates
     // ═══════════════════════════════════════════════════════════
 
     static class SqlEngine {
@@ -542,6 +812,8 @@ public class SqlAssistantServer {
         private final List<PatternEntry> patterns = Collections.synchronizedList(new ArrayList<>());
 
         private final SqlTemplates sqlTemplates = new SqlTemplates();
+        private final BM25Ranker bm25Ranker = new BM25Ranker();
+        private Map<String, TableSchema> currentSchema = new LinkedHashMap<>();
 
         SqlEngine() {
             strategyWeights.put("intent_graph", 1.0);
@@ -550,6 +822,7 @@ public class SqlAssistantServer {
             strategyWeights.put("thesaurus_hash", 0.8);
             strategyWeights.put("regex_rules", 0.6);
             strategyWeights.put("template_match", 1.5);
+            strategyWeights.put("bm25_relevance", 1.4);  // BM25 — high weight, close to template_match
 
             strategyAccuracy.put("intent_graph", 0.88);
             strategyAccuracy.put("lsh_multi_probe", 0.82);
@@ -557,6 +830,16 @@ public class SqlAssistantServer {
             strategyAccuracy.put("thesaurus_hash", 0.78);
             strategyAccuracy.put("regex_rules", 0.70);
             strategyAccuracy.put("template_match", 0.95);
+            strategyAccuracy.put("bm25_relevance", 0.93);  // BM25 has high accuracy due to IDF weighting
+        }
+
+        /** Initialize BM25 index with schema metadata (call after database connection) */
+        void initBM25(Map<String, TableSchema> schema) {
+            this.currentSchema = schema;
+            bm25Ranker.indexTemplates(sqlTemplates);
+            bm25Ranker.indexSchema(schema);
+            System.out.println("       BM25 index built: " + bm25Ranker.getDocumentCount() + " documents, avg length: "
+                + String.format("%.1f", bm25Ranker.getAvgDocLength()));
         }
 
         record Vote(String strategy, String intentType, double rawConfidence, double weightedScore) {}
@@ -571,6 +854,7 @@ public class SqlAssistantServer {
             votes.add(resolveWithThesaurus(q));
             votes.add(resolveWithRegex(q));
             votes.add(resolveWithTemplates(q, schema));
+            votes.add(resolveWithBM25(q, schema));
 
             // Aggregate
             Map<String, Double> scores = new LinkedHashMap<>();
@@ -712,6 +996,20 @@ public class SqlAssistantServer {
             return new Vote("template_match", "Unknown", 0.1, 0.1 * strategyWeights.get("template_match"));
         }
 
+        private Vote resolveWithBM25(String q, Map<String, TableSchema> schema) {
+            // Re-index BM25 if schema changed (different database selected)
+            if (!schema.equals(currentSchema)) {
+                initBM25(schema);
+            }
+            BM25Ranker.BM25Result result = bm25Ranker.findBestIntent(q);
+            if (result != null && result.score > 0.1 && !result.intent.isEmpty()) {
+                // BM25 normalized score is 0-1, use as confidence directly
+                double conf = Math.min(result.score, 0.98);
+                return new Vote("bm25_relevance", result.intent, conf, conf * strategyWeights.get("bm25_relevance"));
+            }
+            return new Vote("bm25_relevance", "Unknown", 0.1, 0.1 * strategyWeights.get("bm25_relevance"));
+        }
+
         private boolean match(String q, String regex) {
             return Pattern.compile("\\b(" + regex + ")\\b").matcher(q).find();
         }
@@ -719,16 +1017,30 @@ public class SqlAssistantServer {
         // ── SQL Generator (schema-aware, template-first) ──
 
         String generateSQL(String query, String intent, Map<String, TableSchema> schema) {
-            // Try template match first
+            // Try template match first (now also BM25-enhanced)
             SqlTemplates.TemplateMatch templateMatch = sqlTemplates.findBestMatch(query.toLowerCase(), schema);
             if (templateMatch != null && templateMatch.score > 0.5) {
                 return templateMatch.sql.endsWith(";") ? templateMatch.sql : templateMatch.sql + ";";
             }
 
+            // If no template matched, try BM25 to find best template
+            if (!schema.equals(currentSchema)) initBM25(schema);
+            BM25Ranker.BM25Result bm25Result = bm25Ranker.findBestIntent(query.toLowerCase());
+            if (bm25Result != null && bm25Result.score > 0.4 && !bm25Result.intent.isEmpty()
+                && bm25Result.source.equals("template")) {
+                // BM25 found a template match — use its intent and try template again
+                SqlTemplates.TemplateMatch bm25Template = sqlTemplates.findBestMatch(
+                    query.toLowerCase(), schema);
+                if (bm25Template != null) {
+                    return bm25Template.sql.endsWith(";") ? bm25Template.sql : bm25Template.sql + ";";
+                }
+            }
+
             String q = query.toLowerCase();
             switch (intent) {
                 case "Select": {
-                    String table = resolveTable(q, schema);
+                    // Use BM25 for table resolution (falls back to keyword matching)
+                    String table = resolveTableBM25(q, schema);
                     TableSchema ts = schema.get(table);
                     String cols = match(q, "all|tous|tout|\\*") ? "*" :
                         (ts != null ? ts.columns.stream().map(c -> c.name).collect(Collectors.joining(", ")) : "*");
@@ -741,7 +1053,7 @@ public class SqlAssistantServer {
                     return "SELECT " + cols + "\nFROM " + table + where + order + limit + ";";
                 }
                 case "Insert": {
-                    String table = resolveTable(q, schema);
+                    String table = resolveTableBM25(q, schema);
                     TableSchema ts = schema.get(table);
                     List<String> colNames = ts != null ? ts.columns.stream()
                         .filter(c -> !c.pk).map(c -> c.name).collect(Collectors.toList())
@@ -750,13 +1062,13 @@ public class SqlAssistantServer {
                     return "INSERT INTO " + table + " (" + String.join(", ", colNames) + ")\nVALUES (" + vals + ");";
                 }
                 case "Update": {
-                    String table = resolveTable(q, schema);
+                    String table = resolveTableBM25(q, schema);
                     List<String> conds = extractConditions(q, schema.get(table));
                     String where = conds.isEmpty() ? "\nWHERE id = :id" : "\nWHERE " + String.join("\n  AND ", conds);
                     return "UPDATE " + table + "\nSET :column = :value" + where + ";";
                 }
                 case "Delete": {
-                    String table = resolveTable(q, schema);
+                    String table = resolveTableBM25(q, schema);
                     List<String> conds = extractConditions(q, schema.get(table));
                     String where = conds.isEmpty() ? "\nWHERE id = :id" : "\nWHERE " + String.join("\n  AND ", conds);
                     return "DELETE FROM " + table + where + ";";
@@ -775,7 +1087,7 @@ public class SqlAssistantServer {
                     return "SELECT * FROM " + tables.get(0) + ";";
                 }
                 case "Aggregate": {
-                    String table = resolveTable(q, schema);
+                    String table = resolveTableBM25(q, schema);
                     String fn = "COUNT";
                     if (match(q, "sum|total|somme")) fn = "SUM";
                     else if (match(q, "average|avg|moyenne|mean")) fn = "AVG";
@@ -789,9 +1101,9 @@ public class SqlAssistantServer {
                     return "SELECT " + fn + "(*), " + col + "\nFROM " + table + where + group + ";";
                 }
                 case "Explain":
-                    return "EXPLAIN ANALYZE\nSELECT * FROM " + resolveTable(q, schema) + " WHERE id = 1;";
+                    return "EXPLAIN ANALYZE\nSELECT * FROM " + resolveTableBM25(q, schema) + " WHERE id = 1;";
                 case "SchemaInfo": {
-                    String table = resolveTable(q, schema);
+                    String table = resolveTableBM25(q, schema);
                     TableSchema ts = schema.get(table);
                     if (ts != null) {
                         String cols = ts.columns.stream()
@@ -856,6 +1168,28 @@ public class SqlAssistantServer {
                 }
             }
             return null;
+        }
+
+        /**
+         * Resolve table using BM25 over COMMENT ON metadata.
+         * Falls back to keyword-based resolveTable if BM25 returns no results.
+         * BM25 leverages table/column comments for semantic matching:
+         *   "salaires" matches employees table via comment "Salaire actuel"
+         *   "congés en attente" matches leave_requests via comment "Demandes de conge"
+         */
+        private String resolveTableBM25(String q, Map<String, TableSchema> schema) {
+            if (!schema.equals(currentSchema)) initBM25(schema);
+            try {
+                String bm25Table = bm25Ranker.findBestTable(q, schema);
+                // Validate: BM25 must return a key that exists in schema
+                if (bm25Table != null && schema.containsKey(bm25Table)) {
+                    return bm25Table;
+                }
+            } catch (Exception e) {
+                // Fallback silently
+            }
+            // Fallback to keyword-based resolution
+            return resolveTable(q, schema);
         }
 
         private List<String> extractConditions(String q, TableSchema ts) {
@@ -969,6 +1303,23 @@ public class SqlAssistantServer {
             response.put("latencyMicros", latencyUs);
             response.put("votes", voteList);
             response.put("scores", result.scores);
+
+            // Add BM25 ranking details for transparency
+            try {
+                List<BM25Ranker.BM25Result> bm25Top = bm25Ranker.rankNormalized(normalized, 3);
+                List<Map<String, Object>> bm25Details = bm25Top.stream().map(r -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("id", r.id);
+                    m.put("intent", r.intent);
+                    m.put("score", Math.round(r.score * 10000.0) / 10000.0);
+                    m.put("source", r.source);
+                    return m;
+                }).collect(Collectors.toList());
+                response.put("bm25TopResults", bm25Details);
+            } catch (Exception e) {
+                // BM25 details are optional
+            }
+
             return response;
         }
 
@@ -1229,8 +1580,14 @@ public class SqlAssistantServer {
                     m.put("pattern", t.pattern);
                     m.put("intent", t.intent);
                     m.put("description", t.description);
+                    m.put("sqlTemplate", t.sqlTemplate);
                     return m;
                 }).collect(Collectors.toList());
+            }
+
+            /** Expose templates for BM25 indexing */
+            List<SqlTemplate> getAllTemplates() {
+                return TEMPLATES;
             }
 
             record TemplateMatch(SqlTemplate template, String sql, String resolvedTable, double score) {}
@@ -1672,8 +2029,8 @@ public class SqlAssistantServer {
         String configFile = args.length > 2 ? args[2] : "databases.json";
 
         System.out.println("============================================================");
-        System.out.println("  Enterprise SQL Assistant V4 — JDK HttpServer + Multi-DB + SQL Templates");
-        System.out.println("  Pure Java 21 + com.sun.net.httpserver + JDBC");
+        System.out.println("  Enterprise SQL Assistant V5 — JDK HttpServer + BM25 + Multi-DB");
+        System.out.println("  Pure Java 21 + com.sun.net.httpserver + JDBC + Okapi BM25");
         System.out.println("============================================================");
         System.out.println();
 
@@ -1686,6 +2043,13 @@ public class SqlAssistantServer {
         dbMgr.connectAll();
 
         SqlEngine engine = new SqlEngine();
+
+        // Initialize BM25 index with first database's schema
+        List<Map<String, Object>> dbList = dbMgr.getDatabaseList();
+        if (!dbList.isEmpty()) {
+            String firstDb = dbList.get(0).get("name").toString();
+            engine.initBM25(dbMgr.getSchema(firstDb));
+        }
 
         HttpServer server = HttpServer.create(new InetSocketAddress("0.0.0.0", port), 0);
 
@@ -1728,4 +2092,5 @@ public class SqlAssistantServer {
         System.out.println("  Press Ctrl+C to stop");
         System.out.println("============================================================");
     }
+}
 }

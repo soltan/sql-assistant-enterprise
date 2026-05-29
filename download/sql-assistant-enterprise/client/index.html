@@ -540,7 +540,8 @@ const INTENT_COLORS = {
 
 const STRATEGY_COLORS = {
   intent_graph:'#3b82f6',lsh_multi_probe:'#8b5cf6',syntactic_parser:'#10b981',
-  thesaurus_hash:'#f59e0b',regex_rules:'#ef4444',template_match:'#14b8a6'
+  thesaurus_hash:'#f59e0b',regex_rules:'#ef4444',template_match:'#14b8a6',
+  bm25_relevance:'#ec4899'
 };
 
 /* Default fallback schema per-database */
@@ -1360,13 +1361,27 @@ function addMessage(role, content, extras) {
 
     if (extras.votes && extras.votes.length) {
       const maxScore = Math.max(...extras.votes.map(v=>v.weightedScore),0.01);
-      html += '<div class="vote-section"><div class="vote-title">Vote Ensemble (6 strategies)</div>';
+      html += '<div class="vote-section"><div class="vote-title">Vote Ensemble (7 strategies)</div>';
       for (const v of extras.votes) {
         const pct = (v.weightedScore/maxScore*100).toFixed(1);
         html += '<div class="vote-row">'
           + '<span class="vote-strategy">'+v.strategy+'</span>'
           + '<div class="vote-bar-bg"><div class="vote-bar" style="width:'+pct+'%;background:'+(STRATEGY_COLORS[v.strategy]||'#6b7280')+'"></div></div>'
           + '<span class="vote-score">'+v.weightedScore.toFixed(3)+'</span>'
+          + '</div>';
+      }
+      html += '</div>';
+    }
+
+    // BM25 Top Results
+    if (extras.bm25TopResults && extras.bm25TopResults.length) {
+      html += '<div class="vote-section"><div class="vote-title" style="color:#ec4899">BM25 Top Results</div>';
+      for (const r of extras.bm25TopResults) {
+        const label = r.source === 'template' ? 'Template' : 'Schema';
+        html += '<div class="vote-row">'
+          + '<span class="vote-strategy" style="color:#ec4899">'+label+'</span>'
+          + '<span style="flex:1;padding:0 8px;font-size:12px;color:#94a3b8">'+r.id.replace('tbl_','').replace('tpl_','')+'</span>'
+          + '<span class="vote-score" style="color:#ec4899">'+(r.score*100).toFixed(1)+'%</span>'
           + '</div>';
       }
       html += '</div>';
